@@ -277,6 +277,129 @@ impl PersistentConstraint {
             ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(0.0),
         }
     }
+
+    pub(crate) fn apply_damping(
+        &self,
+        world: &mut SolverWorld,
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        if !self.enabled || self.damping == 0.0 {
+            return Ok(());
+        }
+        match self.kind {
+            ConstraintKind::Anchor { local_a, local_b } => {
+                damp_anchor(self, world, local_a, local_b, dt)
+            }
+            ConstraintKind::Distance {
+                local_a, local_b, ..
+            }
+            | ConstraintKind::DistanceRange {
+                local_a, local_b, ..
+            } => damp_distance(self, world, local_a, local_b, dt),
+            ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(()),
+        }
+    }
+}
+
+fn damp_anchor(
+    constraint: &PersistentConstraint,
+    world: &mut SolverWorld,
+    local_a: Vec3,
+    local_b: Vec3,
+    dt: f32,
+) -> Result<(), SolverError> {
+    let body_b = required_body_b(constraint)?;
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        let (_, offset_a) = world.anchor_geometry(constraint.body_a, local_a)?;
+        let (_, offset_b) = world.anchor_geometry(body_b, local_b)?;
+        damp_velocity_row(
+            constraint,
+            world,
+            dt,
+            &[
+                XpbdGradient {
+                    body: constraint.body_a,
+                    linear: axis,
+                    angular: offset_a.cross(axis),
+                },
+                XpbdGradient {
+                    body: body_b,
+                    linear: -axis,
+                    angular: -offset_b.cross(axis),
+                },
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn damp_distance(
+    constraint: &PersistentConstraint,
+    world: &mut SolverWorld,
+    local_a: Vec3,
+    local_b: Vec3,
+    dt: f32,
+) -> Result<(), SolverError> {
+    let body_b = required_body_b(constraint)?;
+    let (point_a, _) = world.anchor_geometry(constraint.body_a, local_a)?;
+    let (point_b, _) = world.anchor_geometry(body_b, local_b)?;
+    let normal = normal_or_x(point_a - point_b);
+    let (_, offset_a) = world.anchor_geometry(constraint.body_a, local_a)?;
+    let (_, offset_b) = world.anchor_geometry(body_b, local_b)?;
+    damp_velocity_row(
+        constraint,
+        world,
+        dt,
+        &[
+            XpbdGradient {
+                body: constraint.body_a,
+                linear: normal,
+                angular: offset_a.cross(normal),
+            },
+            XpbdGradient {
+                body: body_b,
+                linear: -normal,
+                angular: -offset_b.cross(normal),
+            },
+        ],
+    )
+}
+
+fn damp_velocity_row(
+    constraint: &PersistentConstraint,
+    world: &mut SolverWorld,
+    dt: f32,
+    gradients: &[XpbdGradient],
+) -> Result<(), SolverError> {
+    let mut relative_velocity = 0.0;
+    let mut effective_inverse_mass = 0.0;
+    for gradient in gradients {
+        let state = world
+            .body(gradient.body)
+            .ok_or(SolverError::MissingBody(gradient.body.get()))?;
+        relative_velocity += gradient.linear.dot(state.velocity.linear);
+        relative_velocity += gradient.angular.dot(state.velocity.angular);
+        let properties = world.solve_properties(gradient.body)?;
+        effective_inverse_mass += properties.inverse_mass * gradient.linear.length_squared();
+        effective_inverse_mass += gradient
+            .angular
+            .dot(properties.world_inverse_inertia * gradient.angular);
+    }
+    if effective_inverse_mass <= 1.0e-12 {
+        return Ok(());
+    }
+
+    let retained_velocity = (-constraint.damping * dt).exp();
+    let impulse = (retained_velocity - 1.0) * relative_velocity / effective_inverse_mass;
+    for gradient in gradients {
+        world.apply_velocity_impulse(
+            gradient.body,
+            gradient.linear,
+            gradient.angular,
+            impulse,
+        )?;
+    }
+    Ok(())
 }
 
 fn solve_anchor(
