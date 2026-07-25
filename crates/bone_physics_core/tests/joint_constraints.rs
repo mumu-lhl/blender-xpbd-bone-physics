@@ -1,6 +1,6 @@
 use bone_physics_core::{
-    BodyId, BodyInit, BoneBodyDesc, ConstraintId, PersistentConstraint,
-    Pose, QualityPolicy, SolverConfig, SolverWorld, StepOptions, Velocity,
+    BodyId, BodyInit, BoneBodyDesc, ConstraintId, PersistentConstraint, Pose, QualityPolicy,
+    SolverConfig, SolverWorld, StepOptions, Velocity,
 };
 use glam::{Quat, Vec3};
 
@@ -148,4 +148,3 @@ fn constraints_are_sorted_by_stable_id_before_solving() {
         world_b.body(BodyId::new(2)).unwrap().pose
     );
 }
-
