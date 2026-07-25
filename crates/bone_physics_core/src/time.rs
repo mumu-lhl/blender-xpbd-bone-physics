@@ -1,7 +1,7 @@
 use crate::error::validate_finite;
 use crate::SolverError;
 
-const STEP_RATIO_EPSILON: f64 = 4.0e-6;
+const STEP_RATIO_EPSILON: f64 = 1.0e-5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QualityPolicy {
@@ -50,8 +50,7 @@ impl FixedClock {
         }
 
         self.accumulator += f64::from(frame_seconds);
-        let available_f64 =
-            (self.accumulator / self.step_seconds_f64 + STEP_RATIO_EPSILON).floor();
+        let available_f64 = (self.accumulator / self.step_seconds_f64 + STEP_RATIO_EPSILON).floor();
         if available_f64 > f64::from(u32::MAX) {
             return Err(SolverError::invalid_value(
                 "accumulated_step_count",
@@ -62,8 +61,7 @@ impl FixedClock {
         let available = available_f64 as u32;
         self.accumulator -= f64::from(available) * self.step_seconds_f64;
         if self.accumulator < 0.0
-            && self.accumulator.abs()
-                <= self.step_seconds_f64 * STEP_RATIO_EPSILON
+            && self.accumulator.abs() <= self.step_seconds_f64 * STEP_RATIO_EPSILON
         {
             self.accumulator = 0.0;
         }
@@ -72,8 +70,9 @@ impl FixedClock {
             QualityPolicy::ApproximatePreview { max_steps } => {
                 (available.min(max_steps), available > max_steps)
             }
-            QualityPolicy::DeterministicPreview
-            | QualityPolicy::AuthoritativeBake => (available, false),
+            QualityPolicy::DeterministicPreview | QualityPolicy::AuthoritativeBake => {
+                (available, false)
+            }
         };
 
         Ok(StepBatch {
