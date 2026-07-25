@@ -178,10 +178,7 @@ impl SolverWorld {
         Ok(&mut self.bodies[index].state)
     }
 
-    pub(crate) fn solve_properties(
-        &self,
-        id: BodyId,
-    ) -> Result<SolveProperties, SolverError> {
+    pub(crate) fn solve_properties(&self, id: BodyId) -> Result<SolveProperties, SolverError> {
         let index = self
             .bodies
             .binary_search_by_key(&id, |entry| entry.desc.id)
