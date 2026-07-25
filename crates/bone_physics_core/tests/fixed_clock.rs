@@ -7,10 +7,7 @@ fn one_second_produces_the_same_step_count_at_common_frame_rates() {
         let steps: u32 = (0..fps)
             .map(|_| {
                 clock
-                    .try_accumulate(
-                        1.0 / fps as f32,
-                        QualityPolicy::AuthoritativeBake,
-                    )
+                    .try_accumulate(1.0 / fps as f32, QualityPolicy::AuthoritativeBake)
                     .unwrap()
                     .steps
             })
@@ -62,16 +59,10 @@ fn approximate_preview_caps_and_discards_only_whole_excess_steps() {
     let mut clock = FixedClock::new(1.0 / 120.0).unwrap();
 
     let capped = clock
-        .try_accumulate(
-            1.0,
-            QualityPolicy::ApproximatePreview { max_steps: 8 },
-        )
+        .try_accumulate(1.0, QualityPolicy::ApproximatePreview { max_steps: 8 })
         .unwrap();
     let following = clock
-        .try_accumulate(
-            0.0,
-            QualityPolicy::ApproximatePreview { max_steps: 8 },
-        )
+        .try_accumulate(0.0, QualityPolicy::ApproximatePreview { max_steps: 8 })
         .unwrap();
 
     assert_eq!(capped.steps, 8);
