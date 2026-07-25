@@ -1,8 +1,8 @@
 use glam::{Quat, Vec3};
 
 use crate::{
-    quat_exp, quat_log, solve_scalar_row, ConstraintKind, PersistentConstraint,
-    Pose, SolverError, SolverWorld, XpbdGradient, XpbdRow,
+    quat_exp, quat_log, solve_scalar_row, ConstraintKind, PersistentConstraint, Pose, SolverError,
+    SolverWorld, XpbdGradient, XpbdRow,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,7 +34,10 @@ impl AnimationTarget {
 
     pub(crate) fn pose_at(self, alpha: f32) -> Pose {
         Pose {
-            translation: self.previous.translation.lerp(self.current.translation, alpha),
+            translation: self
+                .previous
+                .translation
+                .lerp(self.current.translation, alpha),
             rotation: self.previous.rotation.slerp(self.current.rotation, alpha),
         }
     }
@@ -87,8 +90,7 @@ fn solve_attachment(
     dt: f32,
 ) -> Result<(), SolverError> {
     let target_pose = target.pose_at(target_alpha);
-    let target_point =
-        target_pose.translation + target_pose.rotation * target_local_anchor;
+    let target_point = target_pose.translation + target_pose.rotation * target_local_anchor;
     for (index, axis) in [Vec3::X, Vec3::Y, Vec3::Z].into_iter().enumerate() {
         let (point, offset) = world.anchor_geometry(constraint.body_a, local_anchor)?;
         let mut row = XpbdRow {
@@ -144,8 +146,7 @@ pub(crate) fn reference_frame_delta(
     translation_inertia: f32,
     rotation_inertia: f32,
 ) -> (Vec3, Quat) {
-    let translation =
-        (current.translation - previous.translation) * (1.0 - translation_inertia);
+    let translation = (current.translation - previous.translation) * (1.0 - translation_inertia);
     let full_rotation = current.rotation * previous.rotation.conjugate();
     let rotation = quat_exp(quat_log(full_rotation) * (1.0 - rotation_inertia));
     (translation, rotation)
