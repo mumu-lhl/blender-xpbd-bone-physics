@@ -25,10 +25,7 @@ impl SolverError {
     }
 }
 
-pub(crate) fn validate_finite(
-    field: &'static str,
-    value: f32,
-) -> Result<(), SolverError> {
+pub(crate) fn validate_finite(field: &'static str, value: f32) -> Result<(), SolverError> {
     if value.is_finite() {
         Ok(())
     } else {
@@ -36,10 +33,7 @@ pub(crate) fn validate_finite(
     }
 }
 
-pub(crate) fn validate_nonnegative(
-    field: &'static str,
-    value: f32,
-) -> Result<(), SolverError> {
+pub(crate) fn validate_nonnegative(field: &'static str, value: f32) -> Result<(), SolverError> {
     validate_finite(field, value)?;
     if value >= 0.0 {
         Ok(())
