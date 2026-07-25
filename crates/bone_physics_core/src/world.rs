@@ -3,10 +3,8 @@ use glam::{Mat3, Quat, Vec3};
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
+use crate::{AnimationTarget, ConstraintId, PersistentConstraint, QualityPolicy};
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
-use crate::{
-    AnimationTarget, ConstraintId, PersistentConstraint, QualityPolicy,
-};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -328,9 +326,7 @@ impl SolverWorld {
         id: BodyId,
         local_anchor: Vec3,
     ) -> Result<(Vec3, Vec3), SolverError> {
-        let state = self
-            .body(id)
-            .ok_or(SolverError::MissingBody(id.get()))?;
+        let state = self.body(id).ok_or(SolverError::MissingBody(id.get()))?;
         let offset = state.predicted_pose.rotation * local_anchor;
         Ok((state.predicted_pose.translation + offset, offset))
     }
@@ -398,16 +394,12 @@ impl SolverWorld {
         let state = self.body_mut(id)?;
         state.predicted_pose.translation = previous_target.translation
             + translation
-            + rotation
-                * (state.predicted_pose.translation - previous_target.translation);
-        state.predicted_pose.rotation =
-            (rotation * state.predicted_pose.rotation).normalize();
+            + rotation * (state.predicted_pose.translation - previous_target.translation);
+        state.predicted_pose.rotation = (rotation * state.predicted_pose.rotation).normalize();
         state.integrated_pose.translation = previous_target.translation
             + translation
-            + rotation
-                * (state.integrated_pose.translation - previous_target.translation);
-        state.integrated_pose.rotation =
-            (rotation * state.integrated_pose.rotation).normalize();
+            + rotation * (state.integrated_pose.translation - previous_target.translation);
+        state.integrated_pose.rotation = (rotation * state.integrated_pose.rotation).normalize();
         Ok(())
     }
 }
