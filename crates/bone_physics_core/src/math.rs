@@ -26,9 +26,7 @@ pub fn world_inverse_inertia(rotation: Quat, local_diagonal: Vec3) -> Mat3 {
 }
 
 fn normalized_or_identity(rotation: Quat) -> Quat {
-    if !rotation.is_finite()
-        || rotation.length_squared() <= MIN_QUATERNION_LENGTH_SQUARED
-    {
+    if !rotation.is_finite() || rotation.length_squared() <= MIN_QUATERNION_LENGTH_SQUARED {
         Quat::IDENTITY
     } else {
         rotation.normalize()
