@@ -1,6 +1,6 @@
 use bone_physics_core::{
-    BodyId, BodyInit, BoneBodyDesc, CorrectionKind, FixedClock, Pose,
-    QualityPolicy, SolverConfig, SolverError, SolverWorld, Velocity,
+    BodyId, BodyInit, BoneBodyDesc, CorrectionKind, FixedClock, Pose, QualityPolicy, SolverConfig,
+    SolverError, SolverWorld, Velocity,
 };
 use glam::{Quat, Vec3};
 
