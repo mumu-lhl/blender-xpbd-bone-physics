@@ -352,8 +352,7 @@ impl SolverWorld {
         let properties = self.solve_properties(id)?;
         let state = self.body_mut(id)?;
         state.velocity.linear += linear_gradient * properties.inverse_mass * impulse;
-        state.velocity.angular +=
-            properties.world_inverse_inertia * angular_gradient * impulse;
+        state.velocity.angular += properties.world_inverse_inertia * angular_gradient * impulse;
         Ok(())
     }
 
