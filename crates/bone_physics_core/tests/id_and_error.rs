@@ -6,10 +6,7 @@ fn body_ids_sort_by_their_serialized_value() {
 
     ids.sort();
 
-    assert_eq!(
-        ids,
-        [BodyId::new(2), BodyId::new(5), BodyId::new(7)]
-    );
+    assert_eq!(ids, [BodyId::new(2), BodyId::new(5), BodyId::new(7)]);
     assert_eq!(ids[0].get(), 2);
 }
 
@@ -28,4 +25,3 @@ fn invalid_value_error_identifies_the_rejected_field_and_value() {
     assert!(message.contains("radius"));
     assert!(message.contains("-1"));
 }
-
