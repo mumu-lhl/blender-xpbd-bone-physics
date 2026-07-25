@@ -9,12 +9,16 @@ for UMA, PMX/Bullet, or existing Blender jiggle-bone add-ons.
 
 ## Status
 
-Design specification complete; implementation planning pending written-spec
-review.
+Design specification approved; implementation plans complete; first-version
+development in progress.
 
 Read the approved architecture:
 
 - [Design specification](docs/superpowers/specs/2026-07-25-blender-xpbd-bone-physics-design.md)
+- [Core foundation plan](docs/superpowers/plans/2026-07-25-v1-core-foundation.md)
+- [Constraints and collision plan](docs/superpowers/plans/2026-07-25-v1-constraints-collision.md)
+- [PyO3 and Blender runtime plan](docs/superpowers/plans/2026-07-25-v1-blender-runtime.md)
+- [Mesh, bake, and release plan](docs/superpowers/plans/2026-07-25-v1-mesh-bake-release.md)
 
 ## Core decisions
 
