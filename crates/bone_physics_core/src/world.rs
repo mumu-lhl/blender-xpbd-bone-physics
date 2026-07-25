@@ -185,6 +185,17 @@ impl SolverWorld {
 
         let max_constraint_error = self.max_constraint_error()?;
         self.rebuild_velocities(dt)?;
+
+        let constraints = core::mem::take(&mut self.constraints);
+        let damping_result = (|| {
+            for constraint in &constraints {
+                constraint.apply_damping(self, dt)?;
+            }
+            Ok::<(), SolverError>(())
+        })();
+        self.constraints = constraints;
+        damping_result?;
+
         self.target_alpha = target_alpha;
         let _ = options.contact_iterations;
         let _ = options.quality;
@@ -329,6 +340,21 @@ impl SolverWorld {
         let state = self.body(id).ok_or(SolverError::MissingBody(id.get()))?;
         let offset = state.predicted_pose.rotation * local_anchor;
         Ok((state.predicted_pose.translation + offset, offset))
+    }
+
+    pub(crate) fn apply_velocity_impulse(
+        &mut self,
+        id: BodyId,
+        linear_gradient: Vec3,
+        angular_gradient: Vec3,
+        impulse: f32,
+    ) -> Result<(), SolverError> {
+        let properties = self.solve_properties(id)?;
+        let state = self.body_mut(id)?;
+        state.velocity.linear += linear_gradient * properties.inverse_mass * impulse;
+        state.velocity.angular +=
+            properties.world_inverse_inertia * angular_gradient * impulse;
+        Ok(())
     }
 
     fn solve_constraint(
