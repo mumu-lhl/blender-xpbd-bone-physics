@@ -24,3 +24,26 @@ impl SolverError {
         }
     }
 }
+
+pub(crate) fn validate_finite(
+    field: &'static str,
+    value: f32,
+) -> Result<(), SolverError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(SolverError::invalid_value(field, value))
+    }
+}
+
+pub(crate) fn validate_nonnegative(
+    field: &'static str,
+    value: f32,
+) -> Result<(), SolverError> {
+    validate_finite(field, value)?;
+    if value >= 0.0 {
+        Ok(())
+    } else {
+        Err(SolverError::invalid_value(field, value))
+    }
+}
