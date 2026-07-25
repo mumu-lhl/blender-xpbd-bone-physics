@@ -55,10 +55,7 @@ pub struct BoneBodyState {
 }
 
 impl BoneBodyState {
-    pub fn from_desc(
-        desc: &BoneBodyDesc,
-        initial_pose: Pose,
-    ) -> Result<Self, SolverError> {
+    pub fn from_desc(desc: &BoneBodyDesc, initial_pose: Pose) -> Result<Self, SolverError> {
         desc.validate()?;
         initial_pose.validate()?;
 
