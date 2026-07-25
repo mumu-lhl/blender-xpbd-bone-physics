@@ -138,8 +138,8 @@ impl SolverWorld {
                 - state.contact_translation_correction;
             state.velocity.linear += translation_correction / dt;
 
-            let mut rotation_delta = state.predicted_pose.rotation
-                * state.integrated_pose.rotation.conjugate();
+            let mut rotation_delta =
+                state.predicted_pose.rotation * state.integrated_pose.rotation.conjugate();
             if rotation_delta.w < 0.0 {
                 rotation_delta = -rotation_delta;
             }
