@@ -186,10 +186,19 @@ impl SolverWorld {
         let max_constraint_error = self.max_constraint_error()?;
         self.rebuild_velocities(dt)?;
 
+        let previous_target_alpha = self.target_alpha;
         let constraints = core::mem::take(&mut self.constraints);
         let damping_result = (|| {
             for constraint in &constraints {
                 constraint.apply_damping(self, dt)?;
+                let target = self.animation_target(constraint.body_a);
+                constraint.apply_recovery_damping(
+                    self,
+                    target,
+                    previous_target_alpha,
+                    target_alpha,
+                    dt,
+                )?;
             }
             Ok::<(), SolverError>(())
         })();
