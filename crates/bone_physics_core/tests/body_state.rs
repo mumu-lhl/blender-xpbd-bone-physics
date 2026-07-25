@@ -1,6 +1,4 @@
-use bone_physics_core::{
-    BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity,
-};
+use bone_physics_core::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 use glam::{Quat, Vec3};
 
 fn valid_desc() -> BoneBodyDesc {
@@ -39,18 +37,15 @@ fn descriptor_rejects_negative_physical_coefficients() {
     for (field, mutate) in [
         (
             "inverse_mass",
-            (|desc: &mut BoneBodyDesc| desc.inverse_mass = -0.1)
-                as fn(&mut BoneBodyDesc),
+            (|desc: &mut BoneBodyDesc| desc.inverse_mass = -0.1) as fn(&mut BoneBodyDesc),
         ),
         (
             "linear_damping",
-            (|desc: &mut BoneBodyDesc| desc.linear_damping = -0.1)
-                as fn(&mut BoneBodyDesc),
+            (|desc: &mut BoneBodyDesc| desc.linear_damping = -0.1) as fn(&mut BoneBodyDesc),
         ),
         (
             "angular_damping",
-            (|desc: &mut BoneBodyDesc| desc.angular_damping = -0.1)
-                as fn(&mut BoneBodyDesc),
+            (|desc: &mut BoneBodyDesc| desc.angular_damping = -0.1) as fn(&mut BoneBodyDesc),
         ),
     ] {
         let mut desc = valid_desc();
@@ -89,11 +84,7 @@ fn pose_rejects_non_finite_or_near_zero_input() {
 #[test]
 fn body_state_initializes_all_pose_history_without_velocity() {
     let desc = valid_desc();
-    let initial = Pose::try_new(
-        Vec3::new(4.0, 5.0, 6.0),
-        Quat::from_rotation_z(0.25),
-    )
-    .unwrap();
+    let initial = Pose::try_new(Vec3::new(4.0, 5.0, 6.0), Quat::from_rotation_z(0.25)).unwrap();
 
     let state = BoneBodyState::from_desc(&desc, initial).unwrap();
 
