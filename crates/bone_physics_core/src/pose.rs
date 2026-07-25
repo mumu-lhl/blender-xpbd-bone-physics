@@ -18,10 +18,7 @@ impl Pose {
         rotation: Quat::IDENTITY,
     };
 
-    pub fn try_new(
-        translation: Vec3,
-        rotation: Quat,
-    ) -> Result<Self, SolverError> {
+    pub fn try_new(translation: Vec3, rotation: Quat) -> Result<Self, SolverError> {
         validate_vec3("translation", translation)?;
         validate_quaternion(rotation)?;
 
@@ -59,10 +56,7 @@ impl Velocity {
     };
 }
 
-pub(crate) fn validate_vec3(
-    field: &'static str,
-    value: Vec3,
-) -> Result<(), SolverError> {
+pub(crate) fn validate_vec3(field: &'static str, value: Vec3) -> Result<(), SolverError> {
     validate_finite(field, value.x)?;
     validate_finite(field, value.y)?;
     validate_finite(field, value.z)
