@@ -125,3 +125,52 @@ fn animation_target_rejects_non_finite_inertia() {
 
     assert!(result.is_err());
 }
+
+fn angular_velocity_after_recovery_damping(damping: f32) -> f32 {
+    let mut dynamic_body = body(Quat::IDENTITY);
+    dynamic_body.velocity.angular = Vec3::Z;
+    let mut world = SolverWorld::new(
+        SolverConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 120.0,
+        },
+        vec![dynamic_body],
+    )
+    .unwrap();
+    world
+        .set_animation_targets(&[(
+            BodyId::new(1),
+            AnimationTarget {
+                previous: Pose::IDENTITY,
+                current: Pose::IDENTITY,
+                translation_inertia: 1.0,
+                rotation_inertia: 1.0,
+            },
+        )])
+        .unwrap();
+    world
+        .set_constraints(vec![PersistentConstraint::orientation_recovery(
+            ConstraintId::new(31),
+            BodyId::new(1),
+            100.0,
+            damping,
+        )])
+        .unwrap();
+
+    world.substep(1.0 / 120.0, 1.0, options()).unwrap();
+
+    world
+        .body(BodyId::new(1))
+        .unwrap()
+        .velocity
+        .angular
+        .z
+}
+
+#[test]
+fn orientation_recovery_damping_reduces_angular_velocity() {
+    let undamped = angular_velocity_after_recovery_damping(0.0).abs();
+    let damped = angular_velocity_after_recovery_damping(120.0).abs();
+
+    assert!(damped < undamped * 0.5);
+}
