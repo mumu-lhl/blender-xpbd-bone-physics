@@ -1,7 +1,6 @@
 use bone_physics_core::{
-    AnimationTarget, BodyId, BodyInit, BoneBodyDesc, ConstraintId,
-    PersistentConstraint, Pose, QualityPolicy, SolverConfig, SolverWorld,
-    StepOptions, Velocity,
+    AnimationTarget, BodyId, BodyInit, BoneBodyDesc, ConstraintId, PersistentConstraint, Pose,
+    QualityPolicy, SolverConfig, SolverWorld, StepOptions, Velocity,
 };
 use glam::{Quat, Vec3};
 
