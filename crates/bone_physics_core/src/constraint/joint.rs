@@ -3,8 +3,7 @@ use glam::Vec3;
 use crate::error::validate_nonnegative;
 use crate::pose::validate_vec3;
 use crate::{
-    solve_scalar_row, BodyId, ConstraintId, SolverError, SolverWorld,
-    XpbdGradient, XpbdRow,
+    solve_scalar_row, BodyId, ConstraintId, SolverError, SolverWorld, XpbdGradient, XpbdRow,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,10 +200,7 @@ impl PersistentConstraint {
                 target_local_anchor,
             } => {
                 validate_vec3("constraint_local_anchor", *local_anchor)?;
-                validate_vec3(
-                    "constraint_target_local_anchor",
-                    *target_local_anchor,
-                )?;
+                validate_vec3("constraint_target_local_anchor", *target_local_anchor)?;
             }
             ConstraintKind::OrientationRecovery => {}
         }
@@ -244,8 +240,7 @@ impl PersistentConstraint {
                 min,
                 max,
             } => solve_distance_range(self, world, local_a, local_b, min, max, dt),
-            ConstraintKind::Attachment { .. }
-            | ConstraintKind::OrientationRecovery => Ok(()),
+            ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(()),
         }
     }
 
@@ -277,12 +272,9 @@ impl PersistentConstraint {
                 let body_b = required_body_b(self)?;
                 let (point_b, _) = world.anchor_geometry(body_b, *local_b)?;
                 let distance = point_a.distance(point_b);
-                Ok((*min - distance)
-                    .max(0.0)
-                    .max((distance - *max).max(0.0)))
+                Ok((*min - distance).max(0.0).max((distance - *max).max(0.0)))
             }
-            ConstraintKind::Attachment { .. }
-            | ConstraintKind::OrientationRecovery => Ok(0.0),
+            ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(0.0),
         }
     }
 }
