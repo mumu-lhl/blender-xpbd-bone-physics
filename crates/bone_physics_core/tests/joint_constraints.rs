@@ -148,3 +148,40 @@ fn constraints_are_sorted_by_stable_id_before_solving() {
         world_b.body(BodyId::new(2)).unwrap().pose
     );
 }
+
+fn velocity_after_distance_damping(damping: f32) -> f32 {
+    let mut moving = body(2, Vec3::X, true);
+    moving.velocity.linear = Vec3::X;
+    let mut world = SolverWorld::new(
+        SolverConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 120.0,
+        },
+        vec![body(1, Vec3::ZERO, false), moving],
+    )
+    .unwrap();
+    world
+        .set_constraints(vec![PersistentConstraint::distance(
+            ConstraintId::new(3),
+            BodyId::new(1),
+            BodyId::new(2),
+            Vec3::ZERO,
+            Vec3::ZERO,
+            1.0,
+            100.0,
+            damping,
+        )])
+        .unwrap();
+
+    world.substep(1.0 / 120.0, 1.0, options()).unwrap();
+
+    world.body(BodyId::new(2)).unwrap().velocity.linear.x
+}
+
+#[test]
+fn constraint_damping_reduces_relative_velocity_per_second() {
+    let undamped = velocity_after_distance_damping(0.0).abs();
+    let damped = velocity_after_distance_damping(120.0).abs();
+
+    assert!(damped < undamped * 0.5);
+}
