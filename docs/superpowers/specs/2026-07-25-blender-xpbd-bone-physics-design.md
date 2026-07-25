@@ -1,6 +1,6 @@
 # Blender XPBD Bone Physics — Design Specification
 
-Status: approved design, pending written-spec review  
+Status: approved; implementation in progress  
 Date: 2026-07-25  
 Target: Blender 5.2 LTS, with future compatibility expansion  
 License: GPL-3.0
