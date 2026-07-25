@@ -2,9 +2,7 @@ use glam::{Quat, Vec3};
 
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::pose::validate_vec3;
-use crate::{
-    BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity,
-};
+use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -49,10 +47,7 @@ pub struct SolverWorld {
 }
 
 impl SolverWorld {
-    pub fn new(
-        config: SolverConfig,
-        mut bodies: Vec<BodyInit>,
-    ) -> Result<Self, SolverError> {
+    pub fn new(config: SolverConfig, mut bodies: Vec<BodyInit>) -> Result<Self, SolverError> {
         config.validate()?;
         bodies.sort_by_key(|init| init.desc.id);
 
@@ -92,21 +87,18 @@ impl SolverWorld {
             state.contact_translation_correction = Vec3::ZERO;
             state.contact_rotation_correction = Vec3::ZERO;
 
-            state.velocity.linear +=
-                self.config.gravity * entry.desc.gravity_scale * dt;
-            state.velocity.linear *=
-                (-entry.desc.linear_damping * dt).exp();
-            state.velocity.angular *=
-                (-entry.desc.angular_damping * dt).exp();
+            state.velocity.linear += self.config.gravity * entry.desc.gravity_scale * dt;
+            state.velocity.linear *= (-entry.desc.linear_damping * dt).exp();
+            state.velocity.angular *= (-entry.desc.angular_damping * dt).exp();
 
             let translation = state.pose.translation + state.velocity.linear * dt;
-            let delta_rotation =
-                Quat::from_scaled_axis(state.velocity.angular * dt);
+            let delta_rotation = Quat::from_scaled_axis(state.velocity.angular * dt);
             let rotation = (delta_rotation * state.pose.rotation).normalize();
             state.predicted_pose = Pose {
                 translation,
                 rotation,
             };
+            state.integrated_pose = state.predicted_pose;
         }
 
         Ok(())
@@ -141,19 +133,18 @@ impl SolverWorld {
 
         for entry in &mut self.bodies {
             let state = &mut entry.state;
-            let translation_delta = state.predicted_pose.translation
-                - state.pose.translation
+            let translation_correction = state.predicted_pose.translation
+                - state.integrated_pose.translation
                 - state.contact_translation_correction;
-            state.velocity.linear = translation_delta / dt;
+            state.velocity.linear += translation_correction / dt;
 
-            let mut rotation_delta =
-                state.predicted_pose.rotation * state.pose.rotation.conjugate();
+            let mut rotation_delta = state.predicted_pose.rotation
+                * state.integrated_pose.rotation.conjugate();
             if rotation_delta.w < 0.0 {
                 rotation_delta = -rotation_delta;
             }
-            state.velocity.angular = (rotation_delta.to_scaled_axis()
-                - state.contact_rotation_correction)
-                / dt;
+            state.velocity.angular +=
+                (rotation_delta.to_scaled_axis() - state.contact_rotation_correction) / dt;
 
             state.previous_pose = state.pose;
             state.pose = state.predicted_pose;
