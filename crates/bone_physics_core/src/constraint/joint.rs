@@ -392,12 +392,7 @@ fn damp_velocity_row(
     let retained_velocity = (-constraint.damping * dt).exp();
     let impulse = (retained_velocity - 1.0) * relative_velocity / effective_inverse_mass;
     for gradient in gradients {
-        world.apply_velocity_impulse(
-            gradient.body,
-            gradient.linear,
-            gradient.angular,
-            impulse,
-        )?;
+        world.apply_velocity_impulse(gradient.body, gradient.linear, gradient.angular, impulse)?;
     }
     Ok(())
 }
