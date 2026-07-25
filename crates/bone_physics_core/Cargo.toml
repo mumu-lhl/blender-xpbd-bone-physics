@@ -6,6 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+thiserror = "2.0"
 
 [dev-dependencies]
-
