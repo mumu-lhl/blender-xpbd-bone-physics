@@ -159,12 +159,7 @@ fn angular_velocity_after_recovery_damping(damping: f32) -> f32 {
 
     world.substep(1.0 / 120.0, 1.0, options()).unwrap();
 
-    world
-        .body(BodyId::new(1))
-        .unwrap()
-        .velocity
-        .angular
-        .z
+    world.body(BodyId::new(1)).unwrap().velocity.angular.z
 }
 
 #[test]
