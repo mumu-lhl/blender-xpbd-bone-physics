@@ -20,4 +20,3 @@ macro_rules! stable_id {
 stable_id!(BodyId);
 stable_id!(ColliderId);
 stable_id!(ConstraintId);
-
