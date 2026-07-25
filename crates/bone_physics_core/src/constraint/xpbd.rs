@@ -2,9 +2,7 @@ use glam::Vec3;
 
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::pose::validate_vec3;
-use crate::{
-    BodyId, CorrectionKind, SolverError, SolverWorld,
-};
+use crate::{BodyId, CorrectionKind, SolverError, SolverWorld};
 
 const MIN_EFFECTIVE_DENOMINATOR: f32 = 1.0e-12;
 
@@ -47,8 +45,7 @@ pub fn solve_scalar_row(
         validate_vec3("linear_gradient", gradient.linear)?;
         validate_vec3("angular_gradient", gradient.angular)?;
         let properties = world.solve_properties(gradient.body)?;
-        effective_inverse_mass +=
-            properties.inverse_mass * gradient.linear.length_squared();
+        effective_inverse_mass += properties.inverse_mass * gradient.linear.length_squared();
         effective_inverse_mass += gradient
             .angular
             .dot(properties.world_inverse_inertia * gradient.angular);
@@ -63,17 +60,13 @@ pub fn solve_scalar_row(
         });
     }
 
-    let delta_lambda =
-        (-row.c - alpha_tilde * row.lambda) / denominator;
+    let delta_lambda = (-row.c - alpha_tilde * row.lambda) / denominator;
     validate_finite("delta_lambda", delta_lambda)?;
 
     for gradient in &row.gradients {
         let properties = world.solve_properties(gradient.body)?;
-        let translation =
-            gradient.linear * properties.inverse_mass * delta_lambda;
-        let rotation = properties.world_inverse_inertia
-            * gradient.angular
-            * delta_lambda;
+        let translation = gradient.linear * properties.inverse_mass * delta_lambda;
+        let rotation = properties.world_inverse_inertia * gradient.angular * delta_lambda;
         world.apply_pose_correction(
             gradient.body,
             translation,
