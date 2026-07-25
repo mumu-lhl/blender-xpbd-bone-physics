@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+glam = "0.30"
 thiserror = "2.0"
 
 [dev-dependencies]
