@@ -4,6 +4,9 @@ use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
+use crate::{
+    AnimationTarget, ConstraintId, PersistentConstraint, QualityPolicy,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -51,6 +54,22 @@ pub(crate) struct SolveProperties {
 pub struct SolverWorld {
     config: SolverConfig,
     bodies: Vec<BodyEntry>,
+    constraints: Vec<PersistentConstraint>,
+    animation_targets: Vec<(BodyId, AnimationTarget)>,
+    target_alpha: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StepOptions {
+    pub position_iterations: u32,
+    pub contact_iterations: u32,
+    pub quality: QualityPolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StepDiagnostics {
+    pub max_constraint_error: f32,
+    pub position_iterations: u32,
 }
 
 impl SolverWorld {
@@ -82,6 +101,98 @@ impl SolverWorld {
         Ok(Self {
             config,
             bodies: entries,
+            constraints: Vec::new(),
+            animation_targets: Vec::new(),
+            target_alpha: 0.0,
+        })
+    }
+
+    pub fn set_constraints(
+        &mut self,
+        mut constraints: Vec<PersistentConstraint>,
+    ) -> Result<(), SolverError> {
+        constraints.sort_by_key(|constraint| constraint.id);
+        for pair in constraints.windows(2) {
+            if pair[0].id == pair[1].id {
+                return Err(SolverError::DuplicateId {
+                    kind: "constraint",
+                    id: pair[0].id.get(),
+                });
+            }
+        }
+        for constraint in &constraints {
+            constraint.validate()?;
+            self.solve_properties(constraint.body_a)?;
+            if let Some(body_b) = constraint.body_b {
+                self.solve_properties(body_b)?;
+            }
+        }
+        self.constraints = constraints;
+        Ok(())
+    }
+
+    pub fn set_animation_targets(
+        &mut self,
+        targets: &[(BodyId, AnimationTarget)],
+    ) -> Result<(), SolverError> {
+        let mut sorted = targets.to_vec();
+        sorted.sort_by_key(|(id, _)| *id);
+        for pair in sorted.windows(2) {
+            if pair[0].0 == pair[1].0 {
+                return Err(SolverError::DuplicateId {
+                    kind: "animation_target",
+                    id: pair[0].0.get(),
+                });
+            }
+        }
+        for (id, target) in &sorted {
+            self.solve_properties(*id)?;
+            target.validate()?;
+        }
+        self.animation_targets = sorted;
+        self.target_alpha = 0.0;
+        Ok(())
+    }
+
+    pub fn substep(
+        &mut self,
+        dt: f32,
+        target_alpha: f32,
+        options: StepOptions,
+    ) -> Result<StepDiagnostics, SolverError> {
+        validate_finite("target_alpha", target_alpha)?;
+        if !(0.0..=1.0).contains(&target_alpha) {
+            return Err(SolverError::invalid_value("target_alpha", target_alpha));
+        }
+        self.predict(dt)?;
+        self.apply_animation_inertia(target_alpha)?;
+
+        let mut constraints = core::mem::take(&mut self.constraints);
+        let solve_result = (|| {
+            for iteration in 0..options.position_iterations {
+                if iteration % 2 == 0 {
+                    for constraint in &mut constraints {
+                        self.solve_constraint(constraint, target_alpha, dt)?;
+                    }
+                } else {
+                    for constraint in constraints.iter_mut().rev() {
+                        self.solve_constraint(constraint, target_alpha, dt)?;
+                    }
+                }
+            }
+            Ok::<(), SolverError>(())
+        })();
+        self.constraints = constraints;
+        solve_result?;
+
+        let max_constraint_error = self.max_constraint_error()?;
+        self.rebuild_velocities(dt)?;
+        self.target_alpha = target_alpha;
+        let _ = options.contact_iterations;
+        let _ = options.quality;
+        Ok(StepDiagnostics {
+            max_constraint_error,
+            position_iterations: options.position_iterations,
         })
     }
 
@@ -170,6 +281,25 @@ impl SolverWorld {
             .map(|index| &self.bodies[index].state)
     }
 
+    pub fn anchor_error(&self, id: ConstraintId) -> Result<f32, SolverError> {
+        let constraint = self.constraint(id)?;
+        constraint.error(self)
+    }
+
+    pub fn constraint_lambda(&self, id: ConstraintId) -> Option<f32> {
+        let constraint = self
+            .constraints
+            .binary_search_by_key(&id, |constraint| constraint.id)
+            .ok()
+            .map(|index| &self.constraints[index])?;
+        Some(match &constraint.kind {
+            crate::ConstraintKind::DistanceRange { .. } => {
+                constraint.lambda.x.max(constraint.lambda.y)
+            }
+            _ => constraint.lambda.length(),
+        })
+    }
+
     fn body_mut(&mut self, id: BodyId) -> Result<&mut BoneBodyState, SolverError> {
         let index = self
             .bodies
@@ -191,6 +321,94 @@ impl SolverWorld {
                 entry.desc.inverse_inertia,
             ),
         })
+    }
+
+    pub(crate) fn anchor_geometry(
+        &self,
+        id: BodyId,
+        local_anchor: Vec3,
+    ) -> Result<(Vec3, Vec3), SolverError> {
+        let state = self
+            .body(id)
+            .ok_or(SolverError::MissingBody(id.get()))?;
+        let offset = state.predicted_pose.rotation * local_anchor;
+        Ok((state.predicted_pose.translation + offset, offset))
+    }
+
+    fn solve_constraint(
+        &mut self,
+        constraint: &mut PersistentConstraint,
+        target_alpha: f32,
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        constraint.solve_joint(self, dt)?;
+        let target = self.animation_target(constraint.body_a);
+        constraint.solve_recovery(self, target, target_alpha, dt)
+    }
+
+    fn constraint(&self, id: ConstraintId) -> Result<&PersistentConstraint, SolverError> {
+        let index = self
+            .constraints
+            .binary_search_by_key(&id, |constraint| constraint.id)
+            .map_err(|_| SolverError::InvalidValue {
+                field: "constraint_id",
+                value: f64::from(id.get()),
+            })?;
+        Ok(&self.constraints[index])
+    }
+
+    fn max_constraint_error(&self) -> Result<f32, SolverError> {
+        let mut maximum: f32 = 0.0;
+        for constraint in &self.constraints {
+            maximum = maximum.max(constraint.error(self)?);
+        }
+        Ok(maximum)
+    }
+
+    fn animation_target(&self, id: BodyId) -> Option<AnimationTarget> {
+        self.animation_targets
+            .binary_search_by_key(&id, |(body_id, _)| *body_id)
+            .ok()
+            .map(|index| self.animation_targets[index].1)
+    }
+
+    fn apply_animation_inertia(&mut self, target_alpha: f32) -> Result<(), SolverError> {
+        let targets = self.animation_targets.clone();
+        for (id, target) in targets {
+            let previous = target.pose_at(self.target_alpha);
+            let current = target.pose_at(target_alpha);
+            let (translation, rotation) = crate::constraint::reference_frame_delta(
+                previous,
+                current,
+                target.translation_inertia,
+                target.rotation_inertia,
+            );
+            self.shift_reference_frame(id, previous, translation, rotation)?;
+        }
+        Ok(())
+    }
+
+    fn shift_reference_frame(
+        &mut self,
+        id: BodyId,
+        previous_target: Pose,
+        translation: Vec3,
+        rotation: Quat,
+    ) -> Result<(), SolverError> {
+        let state = self.body_mut(id)?;
+        state.predicted_pose.translation = previous_target.translation
+            + translation
+            + rotation
+                * (state.predicted_pose.translation - previous_target.translation);
+        state.predicted_pose.rotation =
+            (rotation * state.predicted_pose.rotation).normalize();
+        state.integrated_pose.translation = previous_target.translation
+            + translation
+            + rotation
+                * (state.integrated_pose.translation - previous_target.translation);
+        state.integrated_pose.rotation =
+            (rotation * state.integrated_pose.rotation).normalize();
+        Ok(())
     }
 }
 
