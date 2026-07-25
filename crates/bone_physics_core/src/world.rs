@@ -1,6 +1,7 @@
-use glam::{Quat, Vec3};
+use glam::{Mat3, Quat, Vec3};
 
 use crate::error::{validate_finite, validate_nonnegative};
+use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 
@@ -38,6 +39,12 @@ pub enum CorrectionKind {
 struct BodyEntry {
     desc: BoneBodyDesc,
     state: BoneBodyState,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SolveProperties {
+    pub inverse_mass: f32,
+    pub world_inverse_inertia: Mat3,
 }
 
 #[derive(Clone, Debug)]
@@ -169,6 +176,24 @@ impl SolverWorld {
             .binary_search_by_key(&id, |entry| entry.desc.id)
             .map_err(|_| SolverError::MissingBody(id.get()))?;
         Ok(&mut self.bodies[index].state)
+    }
+
+    pub(crate) fn solve_properties(
+        &self,
+        id: BodyId,
+    ) -> Result<SolveProperties, SolverError> {
+        let index = self
+            .bodies
+            .binary_search_by_key(&id, |entry| entry.desc.id)
+            .map_err(|_| SolverError::MissingBody(id.get()))?;
+        let entry = &self.bodies[index];
+        Ok(SolveProperties {
+            inverse_mass: entry.desc.inverse_mass,
+            world_inverse_inertia: world_inverse_inertia(
+                entry.state.predicted_pose.rotation,
+                entry.desc.inverse_inertia,
+            ),
+        })
     }
 }
 
