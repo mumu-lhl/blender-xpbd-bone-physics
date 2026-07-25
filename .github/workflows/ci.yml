@@ -23,20 +23,7 @@ jobs:
         run: mkdir -p artifacts
       - name: Check Rust workspace
         shell: bash
-        run: |
-          set -o pipefail
-          status=0
-          echo '$ cargo fmt --all --check' | tee artifacts/cargo-fmt.log
-          cargo fmt --all --check 2>&1 | tee -a artifacts/cargo-fmt.log || status=1
-          echo '$ cargo clippy --workspace --all-targets -- -D warnings' \
-            | tee artifacts/cargo-clippy.log
-          cargo clippy --workspace --all-targets -- -D warnings 2>&1 \
-            | tee -a artifacts/cargo-clippy.log || status=1
-          echo '$ cargo test --workspace --all-targets' \
-            | tee artifacts/cargo-test.log
-          cargo test --workspace --all-targets 2>&1 \
-            | tee -a artifacts/cargo-test.log || status=1
-          exit "$status"
+        run: bash scripts/ci/capture.sh artifacts
       - name: Upload Rust report
         if: always()
         uses: actions/upload-artifact@v4
