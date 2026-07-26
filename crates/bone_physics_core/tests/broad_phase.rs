@@ -22,7 +22,6 @@ fn pair(a: u32, b: u32) -> PairKey {
 
 fn capsule(
     id: u32,
-    body: u32,
     local_a: Vec3,
     local_b: Vec3,
     radius: f32,
@@ -32,7 +31,7 @@ fn capsule(
 ) -> CapsuleCollider {
     CapsuleCollider {
         id: ColliderId::new(id),
-        body: BodyId::new(body),
+        body: BodyId::new(id),
         shape: Capsule::try_new(local_a, local_b, radius, 0.0).unwrap(),
         pose: Pose::try_new(translation, rotation).unwrap(),
         linear_velocity: Vec3::ZERO,
@@ -198,7 +197,6 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
         vec![
             capsule(
                 3,
-                3,
                 -Vec3::X,
                 Vec3::X,
                 0.1,
@@ -207,7 +205,6 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
                 CollisionFilter::default(),
             ),
             capsule(
-                4,
                 4,
                 -Vec3::X,
                 Vec3::X,
@@ -220,7 +217,6 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
         vec![
             capsule(
                 4,
-                4,
                 -Vec3::X,
                 Vec3::X,
                 0.1,
@@ -229,7 +225,6 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
                 CollisionFilter::default(),
             ),
             capsule(
-                3,
                 3,
                 -Vec3::X,
                 Vec3::X,
@@ -249,7 +244,10 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
     );
 
     let mut excluded_by_body = sphere(20, 20, -0.5, 0.7);
-    excluded_by_body.filter.excluded_bodies.insert(BodyId::new(10));
+    excluded_by_body
+        .filter
+        .excluded_bodies
+        .insert(BodyId::new(10));
     let mut excluded_by_mask = sphere(40, 40, 0.25, 0.7);
     excluded_by_mask.filter.layer = 0b0010;
     excluded_by_mask.filter.mask = 0b0010;
@@ -272,9 +270,12 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
         vec![pair(10, 30), pair(20, 30)],
     );
 
-    for (name, previous, predicted, expected) in
-        [touching, rotated, zero_length, shuffled_filtered]
-    {
+    for (name, previous, predicted, expected) in [
+        touching,
+        rotated,
+        zero_length,
+        shuffled_filtered,
+    ] {
         let oracle_pipeline = CollisionPipeline::try_new(&[]).unwrap();
         let oracle = brute_force_swept_pairs(&oracle_pipeline, &previous, &predicted);
         assert_eq!(oracle, expected, "{name}");
@@ -283,7 +284,10 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
             "{name} must not contain duplicate pairs"
         );
 
-        for backend in [BroadPhaseBackend::SweepAndPrune, BroadPhaseBackend::ParryBvh] {
+        for backend in [
+            BroadPhaseBackend::SweepAndPrune,
+            BroadPhaseBackend::ParryBvh,
+        ] {
             let pipeline = CollisionPipeline::try_new_with_backend(&[], backend).unwrap();
             assert_eq!(
                 pipeline.candidate_pairs(&previous, &predicted).unwrap(),
@@ -328,7 +332,10 @@ fn both_backends_reject_changed_shape_and_filter_snapshot_metadata() {
     let mut changed_filter = a.clone();
     changed_filter.filter.layer = 0b0010;
 
-    for backend in [BroadPhaseBackend::SweepAndPrune, BroadPhaseBackend::ParryBvh] {
+    for backend in [
+        BroadPhaseBackend::SweepAndPrune,
+        BroadPhaseBackend::ParryBvh,
+    ] {
         let pipeline = CollisionPipeline::try_new_with_backend(&[], backend).unwrap();
         for (name, changed) in [
             ("shape", changed_shape.clone()),
