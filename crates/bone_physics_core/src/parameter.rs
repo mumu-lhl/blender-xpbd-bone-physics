@@ -33,26 +33,7 @@ impl ParameterCurve {
         points: Vec<CurvePoint>,
         interpolation: CurveInterpolation,
     ) -> Result<Self, SolverError> {
-        if points.is_empty() {
-            return Err(SolverError::invalid_value("curve_point_count", 0.0));
-        }
-
-        for point in &points {
-            validate_finite("curve_s", point.s)?;
-            validate_finite("curve_value", point.value)?;
-            validate_finite("curve_tangent", point.tangent)?;
-            if !(0.0..=1.0).contains(&point.s) {
-                return Err(SolverError::invalid_value("curve_s", point.s));
-            }
-        }
-        for pair in points.windows(2) {
-            if pair[0].s >= pair[1].s {
-                return Err(SolverError::invalid_value(
-                    "curve_point_order",
-                    pair[1].s - pair[0].s,
-                ));
-            }
-        }
+        validate_points(&points)?;
 
         Ok(Self {
             points,
@@ -62,6 +43,7 @@ impl ParameterCurve {
 
     pub fn sample(&self, s: f32) -> Result<f32, SolverError> {
         validate_finite("curve_sample_s", s)?;
+        validate_points(&self.points)?;
         let first = self
             .points
             .first()
@@ -101,4 +83,28 @@ impl ParameterCurve {
         validate_finite("curve_sample_value", value)?;
         Ok(value)
     }
+}
+
+fn validate_points(points: &[CurvePoint]) -> Result<(), SolverError> {
+    if points.is_empty() {
+        return Err(SolverError::invalid_value("curve_point_count", 0.0));
+    }
+
+    for point in points {
+        validate_finite("curve_s", point.s)?;
+        validate_finite("curve_value", point.value)?;
+        validate_finite("curve_tangent", point.tangent)?;
+        if !(0.0..=1.0).contains(&point.s) {
+            return Err(SolverError::invalid_value("curve_s", point.s));
+        }
+    }
+    for pair in points.windows(2) {
+        if pair[0].s >= pair[1].s {
+            return Err(SolverError::invalid_value(
+                "curve_point_order",
+                pair[1].s - pair[0].s,
+            ));
+        }
+    }
+    Ok(())
 }
