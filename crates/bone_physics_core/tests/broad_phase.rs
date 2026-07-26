@@ -109,7 +109,7 @@ fn snapshots_reject_duplicate_missing_or_changed_collider_metadata() {
     );
     assert!(
         pipeline
-            .candidate_pairs(&[a.clone(), b.clone()], &[a.clone()])
+            .candidate_pairs(&[a.clone(), b.clone()], std::slice::from_ref(&a))
             .is_err()
     );
 
