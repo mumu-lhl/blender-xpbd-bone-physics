@@ -31,12 +31,7 @@ fn representative_constraints() -> Vec<PersistentConstraint> {
             0.0,
             0.0,
         ),
-        PersistentConstraint::orientation_recovery(
-            ConstraintId::new(20),
-            BodyId::new(3),
-            0.0,
-            0.0,
-        ),
+        PersistentConstraint::orientation_recovery(ConstraintId::new(20), BodyId::new(3), 0.0, 0.0),
         distance(30, 2, 3),
         PersistentConstraint::angular_limit(
             ConstraintId::new(10),
@@ -112,11 +107,7 @@ fn greedy_colors_are_stable_and_never_write_one_body_twice() {
 #[test]
 fn class_order_is_fixed_while_each_class_alternates_direction() {
     let mut constraints = representative_constraints();
-    constraints.extend([
-        distance(31, 4, 5),
-        distance(32, 3, 4),
-        distance(33, 5, 6),
-    ]);
+    constraints.extend([distance(31, 4, 5), distance(32, 3, 4), distance(33, 5, 6)]);
     let schedule = ConstraintSchedule::build(&constraints).unwrap();
 
     assert_eq!(
@@ -180,11 +171,7 @@ fn class_order_world(constraints: Vec<PersistentConstraint>) -> SolverWorld {
             gravity: Vec3::ZERO,
             fixed_dt: 1.0 / 120.0,
         },
-        vec![
-            body(1, 0.0, false),
-            body(2, 2.0, true),
-            body(3, 4.0, true),
-        ],
+        vec![body(1, 0.0, false), body(2, 2.0, true), body(3, 4.0, true)],
     )
     .unwrap();
     world.set_constraints(constraints).unwrap();
