@@ -3,7 +3,9 @@ use glam::{Mat3, Quat, Vec3};
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
-use crate::{AnimationTarget, ConstraintId, PersistentConstraint, QualityPolicy};
+use crate::{
+    AnimationTarget, ConstraintId, ConstraintSchedule, PersistentConstraint, QualityPolicy,
+};
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -53,6 +55,7 @@ pub struct SolverWorld {
     config: SolverConfig,
     bodies: Vec<BodyEntry>,
     constraints: Vec<PersistentConstraint>,
+    constraint_schedule: ConstraintSchedule,
     animation_targets: Vec<(BodyId, AnimationTarget)>,
     target_alpha: f32,
 }
@@ -100,6 +103,7 @@ impl SolverWorld {
             config,
             bodies: entries,
             constraints: Vec::new(),
+            constraint_schedule: ConstraintSchedule::default(),
             animation_targets: Vec::new(),
             target_alpha: 0.0,
         })
@@ -125,7 +129,9 @@ impl SolverWorld {
                 self.solve_properties(body_b)?;
             }
         }
+        let schedule = ConstraintSchedule::build(&constraints)?;
         self.constraints = constraints;
+        self.constraint_schedule = schedule;
         Ok(())
     }
 
@@ -165,17 +171,17 @@ impl SolverWorld {
         self.predict(dt)?;
         self.apply_animation_inertia(target_alpha)?;
 
+        let schedule = self.constraint_schedule.clone();
         let mut constraints = core::mem::take(&mut self.constraints);
         let solve_result = (|| {
             for iteration in 0..options.position_iterations {
-                if iteration % 2 == 0 {
-                    for constraint in &mut constraints {
-                        self.solve_constraint(constraint, target_alpha, dt)?;
-                    }
-                } else {
-                    for constraint in constraints.iter_mut().rev() {
-                        self.solve_constraint(constraint, target_alpha, dt)?;
-                    }
+                for (_, id) in schedule.iteration_order(iteration) {
+                    let index = constraints
+                        .binary_search_by_key(&id, |constraint| constraint.id)
+                        .map_err(|_| {
+                            SolverError::invalid_value("constraint_schedule_id", id.get())
+                        })?;
+                    self.solve_constraint(&mut constraints[index], target_alpha, dt)?;
                 }
             }
             Ok::<(), SolverError>(())
