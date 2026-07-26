@@ -11,8 +11,9 @@ mod world;
 
 pub use body::{BoneBodyDesc, BoneBodyState};
 pub use constraint::{
-    solve_scalar_row, AnimationTarget, ConstraintKind, PersistentConstraint, RowResult,
-    XpbdGradient, XpbdRow,
+    project_angular_limit, solve_scalar_row, AngularLimit, AnimationTarget, ConstraintKind,
+    ContinuousAngles, EulerOrder, PersistentConstraint, RowResult, SwingTwistLimit, XpbdGradient,
+    XpbdRow, XyzLimit,
 };
 pub use error::SolverError;
 pub use id::{BodyId, ColliderId, ConstraintId};
