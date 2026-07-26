@@ -12,7 +12,10 @@ mod time;
 mod world;
 
 pub use body::{BoneBodyDesc, BoneBodyState};
-pub use chain::{build_cross_links, sample_chain_s, BodyLookup, ChainDesc, CrossLinkSpec};
+pub use chain::{
+    build_cross_link_lattice, build_cross_links, sample_chain_s, BodyLookup, ChainDesc,
+    CrossLinkLatticeSpec, CrossLinkSpec,
+};
 pub use constraint::{
     project_angular_limit, solve_scalar_row, AngularLimit, AnimationTarget, ConstraintKind,
     ContinuousAngles, EulerOrder, PersistentConstraint, RowResult, SwingTwistLimit, XpbdGradient,
