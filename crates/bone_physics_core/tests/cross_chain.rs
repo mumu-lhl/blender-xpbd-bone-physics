@@ -79,22 +79,22 @@ fn unequal_chains_connect_at_matched_arc_length_not_body_index() {
     assert_eq!(middle.body_a, BodyId::new(2));
     assert_eq!(middle.body_b, Some(BodyId::new(5)));
     assert!((middle.compliance - 2.0e-4).abs() < 1.0e-8);
-    match &middle.kind {
+    match middle.kind.clone() {
         ConstraintKind::Distance {
             local_a,
             local_b,
             rest_length,
         } => {
-            assert!((*local_a - Vec3::new(0.0, 2.0, 0.0)).length() < 1.0e-6);
-            assert!((*local_b - Vec3::new(0.0, 1.0, 0.0)).length() < 1.0e-6);
-            assert!((*rest_length - 2.0).abs() < 1.0e-6);
+            assert!((local_a - Vec3::new(0.0, 2.0, 0.0)).length() < 1.0e-6);
+            assert!((local_b - Vec3::new(0.0, 1.0, 0.0)).length() < 1.0e-6);
+            assert!((rest_length - 2.0).abs() < 1.0e-6);
         }
         _ => panic!("expected a concrete distance constraint"),
     }
 
-    match &constraints[3].kind {
+    match constraints[3].kind.clone() {
         ConstraintKind::Distance { rest_length, .. } => {
-            assert!((*rest_length - 13.0_f32.sqrt()).abs() < 1.0e-6);
+            assert!((rest_length - 13.0_f32.sqrt()).abs() < 1.0e-6);
         }
         _ => panic!("expected a diagonal distance constraint"),
     }
@@ -107,10 +107,10 @@ fn generated_links_are_unique_and_all_cycle_forming_links_are_compliant() {
 
     for constraint in &constraints {
         let body_b = constraint.body_b.unwrap();
-        let (local_a, local_b) = match &constraint.kind {
+        let (local_a, local_b) = match constraint.kind.clone() {
             ConstraintKind::Distance {
                 local_a, local_b, ..
-            } => (*local_a, *local_b),
+            } => (local_a, local_b),
             _ => panic!("expected a distance constraint"),
         };
         let key = (
