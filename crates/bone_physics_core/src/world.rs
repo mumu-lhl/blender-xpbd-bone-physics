@@ -4,9 +4,13 @@ use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
 use crate::{
-    AnimationTarget, ConstraintId, ConstraintSchedule, PersistentConstraint, QualityPolicy,
+    AnimationTarget, CachedContact, CapsuleCollider, CapsuleColliderDesc, CollisionPipeline,
+    ConstraintId, ConstraintSchedule, ContactKey, ContactLambdas, PairKey, PersistentConstraint,
+    QualityPolicy,
 };
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
+
+const MIN_CONTACT_DENOMINATOR: f32 = 1.0e-12;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -56,6 +60,8 @@ pub struct SolverWorld {
     bodies: Vec<BodyEntry>,
     constraints: Vec<PersistentConstraint>,
     constraint_schedule: ConstraintSchedule,
+    colliders: Vec<CapsuleColliderDesc>,
+    cached_contacts: Vec<(ContactKey, CachedContact)>,
     animation_targets: Vec<(BodyId, AnimationTarget)>,
     target_alpha: f32,
 }
@@ -69,6 +75,9 @@ pub struct StepOptions {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StepDiagnostics {
+    pub generated_contacts: u32,
+    pub active_contacts: u32,
+    pub deepest_penetration: f32,
     pub max_constraint_error: f32,
     pub position_iterations: u32,
 }
@@ -104,6 +113,8 @@ impl SolverWorld {
             bodies: entries,
             constraints: Vec::new(),
             constraint_schedule: ConstraintSchedule::default(),
+            colliders: Vec::new(),
+            cached_contacts: Vec::new(),
             animation_targets: Vec::new(),
             target_alpha: 0.0,
         })
@@ -133,6 +144,52 @@ impl SolverWorld {
         self.constraints = constraints;
         self.constraint_schedule = schedule;
         Ok(())
+    }
+
+    pub fn set_colliders(
+        &mut self,
+        mut colliders: Vec<CapsuleColliderDesc>,
+    ) -> Result<(), SolverError> {
+        colliders.sort_by_key(|collider| collider.id);
+        for pair in colliders.windows(2) {
+            if pair[0].id == pair[1].id {
+                return Err(SolverError::DuplicateId {
+                    kind: "collider",
+                    id: pair[0].id.get(),
+                });
+            }
+        }
+        for collider in &colliders {
+            collider.validate()?;
+            self.solve_properties(collider.body)?;
+            for body in &collider.filter.excluded_bodies {
+                self.solve_properties(*body)?;
+            }
+            for constraint in &collider.filter.excluded_constraints {
+                if self
+                    .constraints
+                    .binary_search_by_key(constraint, |entry| entry.id)
+                    .is_err()
+                {
+                    return Err(SolverError::invalid_value(
+                        "collision_filter_constraint",
+                        constraint.get(),
+                    ));
+                }
+            }
+        }
+
+        self.cached_contacts.retain(|(key, _)| {
+            collider_metadata_unchanged(&self.colliders, &colliders, key.pair.first())
+                && collider_metadata_unchanged(&self.colliders, &colliders, key.pair.second())
+        });
+        self.colliders = colliders;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn cached_contacts(&self) -> Vec<(ContactKey, CachedContact)> {
+        self.cached_contacts.clone()
     }
 
     pub fn set_animation_targets(
@@ -170,10 +227,14 @@ impl SolverWorld {
         }
         self.predict(dt)?;
         self.apply_animation_inertia(target_alpha)?;
+        let generated_contacts = self.generate_contacts()?;
 
         let schedule = self.constraint_schedule.clone();
+        let colliders = self.colliders.clone();
         let mut constraints = core::mem::take(&mut self.constraints);
+        let mut contacts = core::mem::take(&mut self.cached_contacts);
         let solve_result = (|| {
+            self.warm_start_contacts(&colliders, &contacts)?;
             for iteration in 0..options.position_iterations {
                 for (_, id) in schedule.iteration_order(iteration) {
                     let index = constraints
@@ -183,13 +244,17 @@ impl SolverWorld {
                         })?;
                     self.solve_constraint(&mut constraints[index], target_alpha, dt)?;
                 }
+                self.solve_contact_iteration(&colliders, &mut contacts, iteration)?;
             }
             Ok::<(), SolverError>(())
         })();
         self.constraints = constraints;
+        self.cached_contacts = contacts;
         solve_result?;
 
         let max_constraint_error = self.max_constraint_error()?;
+        let deepest_penetration = self.deepest_penetration()?;
+        let active_contacts = contact_count(self.cached_contacts.len())?;
         self.rebuild_velocities(dt)?;
 
         let previous_target_alpha = self.target_alpha;
@@ -215,6 +280,9 @@ impl SolverWorld {
         let _ = options.contact_iterations;
         let _ = options.quality;
         Ok(StepDiagnostics {
+            generated_contacts,
+            active_contacts,
+            deepest_penetration,
             max_constraint_error,
             position_iterations: options.position_iterations,
         })
@@ -401,6 +469,239 @@ impl SolverWorld {
         Ok(maximum)
     }
 
+    fn generate_contacts(&mut self) -> Result<u32, SolverError> {
+        let (previous, predicted) = self.collider_snapshots()?;
+        let pipeline = CollisionPipeline::try_new(&self.constraints)?;
+        let candidates = pipeline.candidate_pairs(&previous, &predicted)?;
+        let mut generated = Vec::new();
+
+        for pair in candidates {
+            let collider_a = collider_by_id(&predicted, pair.first())?;
+            let collider_b = collider_by_id(&predicted, pair.second())?;
+            let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
+            let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
+            else {
+                continue;
+            };
+
+            for (feature, geometry) in manifold.points.into_iter().enumerate() {
+                let feature = feature as u32;
+                let key = ContactKey::new(pair, feature, feature);
+                let previous = self
+                    .cached_contacts
+                    .binary_search_by_key(&key, |(cached_key, _)| *cached_key)
+                    .ok()
+                    .map(|index| self.cached_contacts[index].1);
+                let (lambdas, age) = if let Some(previous) = previous {
+                    (
+                        previous.lambdas,
+                        previous.age.checked_add(1).ok_or_else(|| {
+                            SolverError::invalid_value("contact_age", previous.age)
+                        })?,
+                    )
+                } else {
+                    (ContactLambdas::default(), 1)
+                };
+                let contact = CachedContact {
+                    local_a: local_point(collider_a.pose, geometry.point_a),
+                    local_b: local_point(collider_b.pose, geometry.point_b),
+                    normal: geometry.normal,
+                    tangents: tangent_basis(geometry.normal),
+                    lambdas,
+                    age,
+                };
+                contact.validate()?;
+                generated.push((key, contact));
+            }
+        }
+
+        generated.sort_by_key(|(key, _)| *key);
+        self.cached_contacts = generated;
+        contact_count(self.cached_contacts.len())
+    }
+
+    fn warm_start_contacts(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        contacts: &[(ContactKey, CachedContact)],
+    ) -> Result<(), SolverError> {
+        for (key, contact) in contacts {
+            if contact.lambdas.normal > 0.0 {
+                self.apply_contact_lambda(colliders, *key, contact, contact.lambdas.normal)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn solve_contact_iteration(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        contacts: &mut [(ContactKey, CachedContact)],
+        iteration: u32,
+    ) -> Result<(), SolverError> {
+        if iteration.is_multiple_of(2) {
+            for (key, contact) in contacts {
+                self.solve_contact(colliders, *key, contact)?;
+            }
+        } else {
+            for (key, contact) in contacts.iter_mut().rev() {
+                self.solve_contact(colliders, *key, contact)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn solve_contact(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        key: ContactKey,
+        contact: &mut CachedContact,
+    ) -> Result<(), SolverError> {
+        contact.validate()?;
+        let collider_a = collider_desc_by_id(colliders, key.pair.first())?;
+        let collider_b = collider_desc_by_id(colliders, key.pair.second())?;
+        let (point_a, offset_a) = self.anchor_geometry(collider_a.body, contact.local_a)?;
+        let (point_b, offset_b) = self.anchor_geometry(collider_b.body, contact.local_b)?;
+        let linear_a = -contact.normal;
+        let linear_b = contact.normal;
+        let angular_a = -offset_a.cross(contact.normal);
+        let angular_b = offset_b.cross(contact.normal);
+        let inverse_mass = self.contact_inverse_mass(
+            collider_a.body,
+            collider_b.body,
+            linear_a,
+            linear_b,
+            angular_a,
+            angular_b,
+        )?;
+        if inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+
+        let constraint_value = (point_b - point_a).dot(contact.normal);
+        validate_finite("contact_constraint_value", constraint_value)?;
+        let unconstrained_delta = -constraint_value / inverse_mass;
+        validate_finite("contact_delta_lambda", unconstrained_delta)?;
+        let previous_lambda = contact.lambdas.normal;
+        let next_lambda = (previous_lambda + unconstrained_delta).max(0.0);
+        let delta_lambda = next_lambda - previous_lambda;
+        if delta_lambda != 0.0 {
+            self.apply_contact_lambda(colliders, key, contact, delta_lambda)?;
+        }
+        contact.lambdas.normal = next_lambda;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn contact_inverse_mass(
+        &self,
+        body_a: BodyId,
+        body_b: BodyId,
+        linear_a: Vec3,
+        linear_b: Vec3,
+        angular_a: Vec3,
+        angular_b: Vec3,
+    ) -> Result<f32, SolverError> {
+        let properties_a = self.solve_properties(body_a)?;
+        let properties_b = self.solve_properties(body_b)?;
+        let inverse_mass = properties_a.inverse_mass * linear_a.length_squared()
+            + angular_a.dot(properties_a.world_inverse_inertia * angular_a)
+            + properties_b.inverse_mass * linear_b.length_squared()
+            + angular_b.dot(properties_b.world_inverse_inertia * angular_b);
+        validate_nonnegative("contact_inverse_mass", inverse_mass)?;
+        Ok(inverse_mass)
+    }
+
+    fn apply_contact_lambda(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        key: ContactKey,
+        contact: &CachedContact,
+        delta_lambda: f32,
+    ) -> Result<(), SolverError> {
+        validate_finite("contact_delta_lambda", delta_lambda)?;
+        let collider_a = collider_desc_by_id(colliders, key.pair.first())?;
+        let collider_b = collider_desc_by_id(colliders, key.pair.second())?;
+        let (_, offset_a) = self.anchor_geometry(collider_a.body, contact.local_a)?;
+        let (_, offset_b) = self.anchor_geometry(collider_b.body, contact.local_b)?;
+        let properties_a = self.solve_properties(collider_a.body)?;
+        let properties_b = self.solve_properties(collider_b.body)?;
+        let linear_a = -contact.normal;
+        let linear_b = contact.normal;
+        let angular_a = -offset_a.cross(contact.normal);
+        let angular_b = offset_b.cross(contact.normal);
+
+        self.apply_pose_correction(
+            collider_a.body,
+            linear_a * properties_a.inverse_mass * delta_lambda,
+            properties_a.world_inverse_inertia * angular_a * delta_lambda,
+            CorrectionKind::NonVelocityContact,
+        )?;
+        self.apply_pose_correction(
+            collider_b.body,
+            linear_b * properties_b.inverse_mass * delta_lambda,
+            properties_b.world_inverse_inertia * angular_b * delta_lambda,
+            CorrectionKind::NonVelocityContact,
+        )
+    }
+
+    fn deepest_penetration(&self) -> Result<f32, SolverError> {
+        let colliders = self.predicted_colliders()?;
+        let pipeline = CollisionPipeline::try_new(&self.constraints)?;
+        let candidates = pipeline.candidate_pairs(&colliders, &colliders)?;
+        let mut deepest: f32 = 0.0;
+        for pair in candidates {
+            let collider_a = collider_by_id(&colliders, pair.first())?;
+            let collider_b = collider_by_id(&colliders, pair.second())?;
+            let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
+            if let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
+            {
+                for point in manifold.points {
+                    deepest = deepest.max(point.penetration);
+                }
+            }
+        }
+        Ok(deepest)
+    }
+
+    fn collider_snapshots(
+        &self,
+    ) -> Result<(Vec<CapsuleCollider>, Vec<CapsuleCollider>), SolverError> {
+        let mut previous = Vec::with_capacity(self.colliders.len());
+        let mut predicted = Vec::with_capacity(self.colliders.len());
+        for collider in &self.colliders {
+            let state = self
+                .body(collider.body)
+                .ok_or(SolverError::MissingBody(collider.body.get()))?;
+            previous.push(runtime_collider(
+                collider,
+                state.previous_pose,
+                state.velocity.linear,
+            ));
+            predicted.push(runtime_collider(
+                collider,
+                state.predicted_pose,
+                state.velocity.linear,
+            ));
+        }
+        Ok((previous, predicted))
+    }
+
+    fn predicted_colliders(&self) -> Result<Vec<CapsuleCollider>, SolverError> {
+        let mut colliders = Vec::with_capacity(self.colliders.len());
+        for collider in &self.colliders {
+            let state = self
+                .body(collider.body)
+                .ok_or(SolverError::MissingBody(collider.body.get()))?;
+            colliders.push(runtime_collider(
+                collider,
+                state.predicted_pose,
+                state.velocity.linear,
+            ));
+        }
+        Ok(colliders)
+    }
+
     fn animation_target(&self, id: BodyId) -> Option<AnimationTarget> {
         self.animation_targets
             .binary_search_by_key(&id, |(body_id, _)| *body_id)
@@ -442,6 +743,84 @@ impl SolverWorld {
         state.integrated_pose.rotation = (rotation * state.integrated_pose.rotation).normalize();
         Ok(())
     }
+}
+
+fn collider_metadata_unchanged(
+    previous: &[CapsuleColliderDesc],
+    current: &[CapsuleColliderDesc],
+    id: crate::ColliderId,
+) -> bool {
+    let previous = previous
+        .binary_search_by_key(&id, |collider| collider.id)
+        .ok()
+        .map(|index| &previous[index]);
+    let current = current
+        .binary_search_by_key(&id, |collider| collider.id)
+        .ok()
+        .map(|index| &current[index]);
+    previous.is_some() && previous == current
+}
+
+fn runtime_collider(
+    collider: &CapsuleColliderDesc,
+    pose: Pose,
+    linear_velocity: Vec3,
+) -> CapsuleCollider {
+    CapsuleCollider {
+        id: collider.id,
+        body: collider.body,
+        shape: collider.shape,
+        pose,
+        linear_velocity,
+        filter: collider.filter.clone(),
+    }
+}
+
+fn collider_by_id(
+    colliders: &[CapsuleCollider],
+    id: crate::ColliderId,
+) -> Result<&CapsuleCollider, SolverError> {
+    let index = colliders
+        .binary_search_by_key(&id, |collider| collider.id)
+        .map_err(|_| SolverError::invalid_value("contact_collider_id", id.get()))?;
+    Ok(&colliders[index])
+}
+
+fn collider_desc_by_id(
+    colliders: &[CapsuleColliderDesc],
+    id: crate::ColliderId,
+) -> Result<&CapsuleColliderDesc, SolverError> {
+    let index = colliders
+        .binary_search_by_key(&id, |collider| collider.id)
+        .map_err(|_| SolverError::invalid_value("contact_collider_id", id.get()))?;
+    Ok(&colliders[index])
+}
+
+fn cached_normal_for_pair(contacts: &[(ContactKey, CachedContact)], pair: PairKey) -> Option<Vec3> {
+    contacts
+        .iter()
+        .find(|(key, _)| key.pair == pair)
+        .map(|(_, contact)| contact.normal)
+}
+
+fn local_point(pose: Pose, point: Vec3) -> Vec3 {
+    pose.rotation.conjugate() * (point - pose.translation)
+}
+
+fn tangent_basis(normal: Vec3) -> [Vec3; 2] {
+    let reference = if normal.x.abs() <= normal.y.abs() && normal.x.abs() <= normal.z.abs() {
+        Vec3::X
+    } else if normal.y.abs() <= normal.z.abs() {
+        Vec3::Y
+    } else {
+        Vec3::Z
+    };
+    let first = normal.cross(reference).normalize();
+    [first, normal.cross(first).normalize()]
+}
+
+fn contact_count(count: usize) -> Result<u32, SolverError> {
+    u32::try_from(count).map_err(|_| SolverError::invalid_value("contact_count", count as f64))
 }
 
 fn validate_dt(dt: f32) -> Result<(), SolverError> {
