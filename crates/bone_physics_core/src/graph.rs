@@ -83,7 +83,7 @@ impl ConstraintSchedule {
         let mut result = Vec::new();
         for class in CLASS_ORDER {
             let colors = self.colors(class);
-            if iteration % 2 == 0 {
+            if iteration.is_multiple_of(2) {
                 for color in colors {
                     result.extend(color.constraint_ids.iter().copied().map(|id| (class, id)));
                 }
