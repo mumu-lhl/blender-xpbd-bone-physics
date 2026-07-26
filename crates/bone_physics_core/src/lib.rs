@@ -2,6 +2,7 @@
 
 mod body;
 mod chain;
+mod collision;
 mod constraint;
 mod error;
 mod graph;
@@ -16,6 +17,10 @@ pub use body::{BoneBodyDesc, BoneBodyState};
 pub use chain::{
     build_cross_link_lattice, build_cross_links, sample_chain_s, BodyLookup, ChainDesc,
     CrossLinkLatticeSpec, CrossLinkSpec,
+};
+pub use collision::{
+    capsule_manifold, Capsule, CapsuleCollider, CapsuleManifold, CollisionFilter, ContactGeometry,
+    PairKey,
 };
 pub use constraint::{
     project_angular_limit, solve_scalar_row, AngularLimit, AnimationTarget, ConstraintKind,
