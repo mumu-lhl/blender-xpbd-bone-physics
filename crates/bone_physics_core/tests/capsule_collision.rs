@@ -95,6 +95,24 @@ fn coincidence_uses_cached_normal_before_relative_velocity_or_ids() {
 }
 
 #[test]
+fn coincident_cached_normal_is_canonical_under_argument_reversal() {
+    let a = collider(72, 72, -Vec3::X, Vec3::X, 0.25, Vec3::ZERO, Vec3::Z);
+    let b = collider(19, 19, -Vec3::X, Vec3::X, 0.25, Vec3::ZERO, -Vec3::Z);
+
+    let forward = capsule_manifold(&a, &b, Some(Vec3::Y)).unwrap().unwrap();
+    let reverse = capsule_manifold(&b, &a, Some(Vec3::Y)).unwrap().unwrap();
+
+    assert_eq!(
+        forward.pair,
+        PairKey::ordered(ColliderId::new(19), ColliderId::new(72)).unwrap()
+    );
+    assert_eq!(forward, reverse);
+    for point in forward.points {
+        assert!(point.normal.dot(Vec3::Y) > 0.999);
+    }
+}
+
+#[test]
 fn zero_length_coincidence_falls_back_to_velocity_then_stable_ids() {
     let stationary = sphere(30, 0.0, 0.25);
     let mut moving = sphere(31, 0.0, 0.25);
