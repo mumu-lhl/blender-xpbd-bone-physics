@@ -19,8 +19,8 @@ pub use chain::{
     CrossLinkLatticeSpec, CrossLinkSpec,
 };
 pub use collision::{
-    capsule_manifold, Capsule, CapsuleCollider, CapsuleManifold, CollisionFilter, ContactGeometry,
-    PairKey,
+    capsule_manifold, Capsule, CapsuleCollider, CapsuleManifold, CollisionFilter,
+    CollisionPipeline, ContactGeometry, PairKey,
 };
 pub use constraint::{
     project_angular_limit, solve_scalar_row, AngularLimit, AnimationTarget, ConstraintKind,
