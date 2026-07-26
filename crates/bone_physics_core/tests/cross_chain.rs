@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use bone_physics_core::{
-    build_cross_links, BodyId, BodyLookup, BoneBodyDesc, ChainDesc, ConstraintId, ConstraintKind,
-    CrossLinkSpec, CurveInterpolation, CurvePoint, ParameterCurve, Pose,
+    build_cross_link_lattice, build_cross_links, BodyId, BodyLookup, BoneBodyDesc, ChainDesc,
+    ConstraintId, ConstraintKind, CrossLinkLatticeSpec, CrossLinkSpec, CurveInterpolation,
+    CurvePoint, ParameterCurve, Pose,
 };
 use glam::{Quat, Vec3};
 
@@ -127,6 +128,168 @@ fn generated_links_are_unique_and_all_cycle_forming_links_are_compliant() {
         assert!(constraint.compliance.is_finite());
         assert!(constraint.compliance > 0.0);
     }
+}
+
+#[test]
+fn exact_internal_boundary_selects_the_following_bone() {
+    let bodies = BodyLookup::try_new(vec![
+        body(30, 0.0, 0.0, 0.01),
+        body(31, 0.0, 0.01, 5.0),
+        body(32, 2.0, 0.0, 5.01),
+    ])
+    .unwrap();
+    let spec = CrossLinkSpec {
+        first_constraint_id: ConstraintId::new(90),
+        chain_a: ChainDesc {
+            bodies: vec![BodyId::new(30), BodyId::new(31)],
+            rest_lengths: vec![0.01, 5.0],
+            closed: false,
+        },
+        chain_b: ChainDesc {
+            bodies: vec![BodyId::new(32)],
+            rest_lengths: vec![5.01],
+            closed: false,
+        },
+        samples: vec![0.01_f32 / 5.01_f32],
+        diagonals: false,
+        compliance_curve: curve(0.0, 0.0),
+    };
+
+    let constraints = build_cross_links(&spec, &bodies).unwrap();
+
+    assert_eq!(constraints.len(), 1);
+    assert_eq!(constraints[0].body_a, BodyId::new(31));
+    match constraints[0].kind.clone() {
+        ConstraintKind::Distance {
+            local_a, ..
+        } => {
+            assert_eq!(local_a, Vec3::ZERO);
+        }
+        _ => panic!("expected a distance constraint"),
+    }
+}
+
+#[test]
+fn mixed_compliance_breaks_a_rigid_ladder_cycle() {
+    let mut spec = uneven_spec(curve(0.0, 1.0e-4));
+    spec.samples = vec![0.0, 1.0];
+    spec.diagonals = false;
+
+    let constraints = build_cross_links(&spec, &lookup()).unwrap();
+
+    assert_eq!(constraints.len(), 2);
+    assert_eq!(constraints[0].compliance, 0.0);
+    assert!(constraints[1].compliance > 0.0);
+}
+
+#[test]
+fn cross_links_reject_self_links_and_non_finite_derived_geometry() {
+    let bodies = lookup();
+    let mut self_link = uneven_spec(curve(0.0, 0.0));
+    self_link.chain_b = self_link.chain_a.clone();
+    self_link.samples = vec![0.5];
+    self_link.diagonals = false;
+    assert!(build_cross_links(&self_link, &bodies).is_err());
+
+    let extreme = BodyLookup::try_new(vec![
+        body(10, f32::MAX, 0.0, f32::MAX),
+        body(11, 0.0, 0.0, 1.0),
+    ])
+    .unwrap();
+    let overflow = CrossLinkSpec {
+        first_constraint_id: ConstraintId::new(500),
+        chain_a: ChainDesc {
+            bodies: vec![BodyId::new(10)],
+            rest_lengths: vec![1.0],
+            closed: false,
+        },
+        chain_b: ChainDesc {
+            bodies: vec![BodyId::new(11)],
+            rest_lengths: vec![1.0],
+            closed: false,
+        },
+        samples: vec![1.0],
+        diagonals: false,
+        compliance_curve: curve(0.0, 0.0),
+    };
+    assert!(build_cross_links(&overflow, &extreme).is_err());
+}
+
+#[test]
+fn closed_lattice_builds_one_seam_and_rejects_an_all_rigid_ring() {
+    let bodies = BodyLookup::try_new(vec![
+        body(20, 0.0, 0.0, 1.0),
+        body(21, 1.0, 0.0, 2.0),
+        body(22, 2.0, 0.0, 3.0),
+        body(23, 3.0, 0.0, 4.0),
+    ])
+    .unwrap();
+    let chains = vec![
+        ChainDesc {
+            bodies: vec![BodyId::new(20)],
+            rest_lengths: vec![1.0],
+            closed: false,
+        },
+        ChainDesc {
+            bodies: vec![BodyId::new(21)],
+            rest_lengths: vec![2.0],
+            closed: false,
+        },
+        ChainDesc {
+            bodies: vec![BodyId::new(22)],
+            rest_lengths: vec![3.0],
+            closed: false,
+        },
+        ChainDesc {
+            bodies: vec![BodyId::new(23)],
+            rest_lengths: vec![4.0],
+            closed: false,
+        },
+    ];
+    let lattice = CrossLinkLatticeSpec {
+        first_constraint_id: ConstraintId::new(600),
+        chains: chains.clone(),
+        samples: vec![0.0, 1.0],
+        diagonals: true,
+        closed: true,
+        compliance_curve: curve(1.0e-4, 2.0e-4),
+    };
+
+    let constraints = build_cross_link_lattice(&lattice, &bodies).unwrap();
+
+    assert_eq!(constraints.len(), 16);
+    assert_eq!(
+        constraints
+            .iter()
+            .map(|constraint| constraint.id.get())
+            .collect::<Vec<_>>(),
+        (600..616).collect::<Vec<_>>()
+    );
+    let pairs = constraints
+        .iter()
+        .map(|constraint| {
+            let a = constraint.body_a.get();
+            let b = constraint.body_b.unwrap().get();
+            (a.min(b), a.max(b))
+        })
+        .collect::<Vec<_>>();
+    for expected in [(20, 21), (21, 22), (22, 23), (20, 23)] {
+        assert_eq!(
+            pairs.iter().filter(|pair| **pair == expected).count(),
+            4,
+            "pair={expected:?}"
+        );
+    }
+
+    let rigid_ring = CrossLinkLatticeSpec {
+        first_constraint_id: ConstraintId::new(700),
+        chains,
+        samples: vec![0.5],
+        diagonals: false,
+        closed: true,
+        compliance_curve: curve(0.0, 0.0),
+    };
+    assert!(build_cross_link_lattice(&rigid_ring, &bodies).is_err());
 }
 
 #[test]
