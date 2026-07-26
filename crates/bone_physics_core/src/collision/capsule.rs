@@ -71,10 +71,7 @@ pub fn capsule_manifold(
     let radius_b = b.shape.effective_radius()?;
     let radius_sum = radius_a + radius_b;
     if !radius_sum.is_finite() {
-        return Err(SolverError::invalid_value(
-            "capsule_radius_sum",
-            radius_sum,
-        ));
+        return Err(SolverError::invalid_value("capsule_radius_sum", radius_sum));
     }
 
     let (closest_a, closest_b) = closest_segment_points(a0, a1, b0, b1);
@@ -92,24 +89,10 @@ pub fn capsule_manifold(
     let axis_a = a1 - a0;
     let axis_b = b1 - b0;
     let fallback = fallback_normal(pair, a, b, axis_a, axis_b, cached_normal)?;
-    let mut points = parallel_contacts(
-        a0,
-        a1,
-        b0,
-        b1,
-        radius_a,
-        radius_b,
-        radius_sum,
-        fallback,
-    )?;
+    let mut points = parallel_contacts(a0, a1, b0, b1, radius_a, radius_b, radius_sum, fallback)?;
     if points.is_empty() {
         points.push(make_contact(
-            closest_a,
-            closest_b,
-            radius_a,
-            radius_b,
-            radius_sum,
-            fallback,
+            closest_a, closest_b, radius_a, radius_b, radius_sum, fallback,
         )?);
     }
 
@@ -131,9 +114,7 @@ fn parallel_contacts(
     let axis_b = b1 - b0;
     let length_a = axis_a.length();
     let length_b = axis_b.length();
-    if length_a <= GEOMETRY_EPSILON_SQUARED.sqrt()
-        || length_b <= GEOMETRY_EPSILON_SQUARED.sqrt()
-    {
+    if length_a <= GEOMETRY_EPSILON_SQUARED.sqrt() || length_b <= GEOMETRY_EPSILON_SQUARED.sqrt() {
         return Ok(Vec::new());
     }
 
@@ -157,12 +138,7 @@ fn parallel_contacts(
         let point_b = closest_point_on_segment(point_a, b0, b1);
         if point_a.distance(point_b) <= radius_sum {
             contacts.push(make_contact(
-                point_a,
-                point_b,
-                radius_a,
-                radius_b,
-                radius_sum,
-                fallback,
+                point_a, point_b, radius_a, radius_b, radius_sum, fallback,
             )?);
         }
     }
@@ -244,10 +220,7 @@ fn fallback_normal(
             }
         }
     }
-    usable_normal(basis).ok_or(SolverError::invalid_value(
-        "contact_normal",
-        f64::NAN,
-    ))
+    usable_normal(basis).ok_or(SolverError::invalid_value("contact_normal", f64::NAN))
 }
 
 fn usable_normal(candidate: Vec3) -> Option<Vec3> {
