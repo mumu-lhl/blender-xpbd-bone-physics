@@ -92,9 +92,7 @@ fn configured_constraint_exclusion_can_filter_a_compliant_link() {
     let b = collider(31, 2);
 
     assert!(pipeline.allows_pair(&a, &b).unwrap());
-    a.filter
-        .excluded_constraints
-        .insert(ConstraintId::new(30));
+    a.filter.excluded_constraints.insert(ConstraintId::new(30));
     assert!(!pipeline.allows_pair(&a, &b).unwrap());
     assert!(!pipeline.allows_pair(&b, &a).unwrap());
 }
