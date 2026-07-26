@@ -300,8 +300,7 @@ impl PersistentConstraint {
                     dt,
                 );
                 if let ConstraintKind::AngularLimit {
-                    continuous: stored,
-                    ..
+                    continuous: stored, ..
                 } = &mut self.kind
                 {
                     *stored = continuous;
@@ -346,13 +345,7 @@ impl PersistentConstraint {
                 rest_relative,
                 limit,
                 continuous,
-            } => crate::constraint::angular_error(
-                self,
-                world,
-                *rest_relative,
-                limit,
-                *continuous,
-            ),
+            } => crate::constraint::angular_error(self, world, *rest_relative, limit, *continuous),
             ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(0.0),
         }
     }
