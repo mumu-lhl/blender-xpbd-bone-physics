@@ -270,12 +270,8 @@ fn backends_match_an_independent_swept_aabb_oracle_for_edge_case_matrix() {
         vec![pair(10, 30), pair(20, 30)],
     );
 
-    for (name, previous, predicted, expected) in [
-        touching,
-        rotated,
-        zero_length,
-        shuffled_filtered,
-    ] {
+    for (name, previous, predicted, expected) in [touching, rotated, zero_length, shuffled_filtered]
+    {
         let oracle_pipeline = CollisionPipeline::try_new(&[]).unwrap();
         let oracle = brute_force_swept_pairs(&oracle_pipeline, &previous, &predicted);
         assert_eq!(oracle, expected, "{name}");
