@@ -56,39 +56,19 @@ fn separated_touching_and_penetrating_capsules_have_explicit_semantics() {
 
     assert!(capsule_manifold(&a, &separated, None).unwrap().is_none());
 
-    let touching = capsule_manifold(&a, &touching, None)
-        .unwrap()
-        .unwrap();
+    let touching = capsule_manifold(&a, &touching, None).unwrap().unwrap();
     assert_finite_manifold(&touching);
     assert!(touching.points[0].penetration.abs() < 1.0e-6);
 
-    let penetrating = capsule_manifold(&a, &penetrating, None)
-        .unwrap()
-        .unwrap();
+    let penetrating = capsule_manifold(&a, &penetrating, None).unwrap().unwrap();
     assert_finite_manifold(&penetrating);
     assert!((penetrating.points[0].penetration - 0.25).abs() < 1.0e-6);
 }
 
 #[test]
 fn crossing_capsules_use_axis_cross_product_for_a_finite_normal() {
-    let a = collider(
-        10,
-        10,
-        -Vec3::X,
-        Vec3::X,
-        0.2,
-        Vec3::ZERO,
-        Vec3::ZERO,
-    );
-    let b = collider(
-        11,
-        11,
-        -Vec3::Y,
-        Vec3::Y,
-        0.2,
-        Vec3::ZERO,
-        Vec3::ZERO,
-    );
+    let a = collider(10, 10, -Vec3::X, Vec3::X, 0.2, Vec3::ZERO, Vec3::ZERO);
+    let b = collider(11, 11, -Vec3::Y, Vec3::Y, 0.2, Vec3::ZERO, Vec3::ZERO);
 
     let manifold = capsule_manifold(&a, &b, None).unwrap().unwrap();
 
@@ -100,29 +80,11 @@ fn crossing_capsules_use_axis_cross_product_for_a_finite_normal() {
 
 #[test]
 fn coincidence_uses_cached_normal_before_relative_velocity_or_ids() {
-    let mut a = collider(
-        20,
-        20,
-        -Vec3::X,
-        Vec3::X,
-        0.25,
-        Vec3::ZERO,
-        Vec3::Z,
-    );
-    let b = collider(
-        21,
-        21,
-        -Vec3::X,
-        Vec3::X,
-        0.25,
-        Vec3::ZERO,
-        -Vec3::Z,
-    );
+    let mut a = collider(20, 20, -Vec3::X, Vec3::X, 0.25, Vec3::ZERO, Vec3::Z);
+    let b = collider(21, 21, -Vec3::X, Vec3::X, 0.25, Vec3::ZERO, -Vec3::Z);
     a.linear_velocity = Vec3::Z;
 
-    let manifold = capsule_manifold(&a, &b, Some(Vec3::Y))
-        .unwrap()
-        .unwrap();
+    let manifold = capsule_manifold(&a, &b, Some(Vec3::Y)).unwrap().unwrap();
 
     assert_finite_manifold(&manifold);
     assert_eq!(manifold.points.len(), 2);
@@ -193,7 +155,10 @@ fn pair_and_manifold_are_canonical_under_argument_reversal() {
     let forward = capsule_manifold(&a, &b, None).unwrap().unwrap();
     let reverse = capsule_manifold(&b, &a, None).unwrap().unwrap();
 
-    assert_eq!(forward.pair, PairKey::ordered(ColliderId::new(70), ColliderId::new(90)).unwrap());
+    assert_eq!(
+        forward.pair,
+        PairKey::ordered(ColliderId::new(70), ColliderId::new(90)).unwrap()
+    );
     assert_eq!(forward, reverse);
 }
 
