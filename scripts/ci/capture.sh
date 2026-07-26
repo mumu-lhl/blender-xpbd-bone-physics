@@ -20,4 +20,7 @@ echo '$ cargo test --workspace --all-targets' \
 cargo test --workspace --all-targets 2>&1 \
   | tee -a "$report_dir/cargo-test.log" || status=1
 
+echo '$ cargo tree --duplicates' | tee "$report_dir/cargo-tree-duplicates.log"
+cargo tree --duplicates 2>&1 | tee -a "$report_dir/cargo-tree-duplicates.log" || status=1
+
 exit "$status"

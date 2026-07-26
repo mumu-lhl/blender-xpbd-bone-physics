@@ -36,10 +36,12 @@ fn non_overlapping_swept_bounds_do_not_emit_a_candidate() {
     let previous = vec![sphere(1, 1, 0.0, 0.25), sphere(2, 2, 3.0, 0.25)];
     let predicted = vec![sphere(1, 1, 1.0, 0.25), sphere(2, 2, 3.0, 0.25)];
 
-    assert!(pipeline
-        .candidate_pairs(&previous, &predicted)
-        .unwrap()
-        .is_empty());
+    assert!(
+        pipeline
+            .candidate_pairs(&previous, &predicted)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -64,10 +66,12 @@ fn broad_phase_applies_collision_filters_before_returning_pairs() {
     a.filter.excluded_bodies.insert(b.body);
     let pipeline = CollisionPipeline::try_new(&[]).unwrap();
 
-    assert!(pipeline
-        .candidate_pairs(&[a.clone(), b.clone()], &[a, b])
-        .unwrap()
-        .is_empty());
+    assert!(
+        pipeline
+            .candidate_pairs(&[a.clone(), b.clone()], &[a, b])
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -98,15 +102,21 @@ fn snapshots_reject_duplicate_missing_or_changed_collider_metadata() {
     let a = sphere(1, 1, 0.0, 0.5);
     let b = sphere(2, 2, 0.0, 0.5);
 
-    assert!(pipeline
-        .candidate_pairs(&[a.clone(), a.clone()], &[a.clone(), b.clone()])
-        .is_err());
-    assert!(pipeline
-        .candidate_pairs(&[a.clone(), b.clone()], &[a.clone()])
-        .is_err());
+    assert!(
+        pipeline
+            .candidate_pairs(&[a.clone(), a.clone()], &[a.clone(), b.clone()])
+            .is_err()
+    );
+    assert!(
+        pipeline
+            .candidate_pairs(&[a.clone(), b.clone()], &[a.clone()])
+            .is_err()
+    );
 
     let changed_body = sphere(1, 99, 0.0, 0.5);
-    assert!(pipeline
-        .candidate_pairs(&[a, b.clone()], &[changed_body, b])
-        .is_err());
+    assert!(
+        pipeline
+            .candidate_pairs(&[a, b.clone()], &[changed_body, b])
+            .is_err()
+    );
 }

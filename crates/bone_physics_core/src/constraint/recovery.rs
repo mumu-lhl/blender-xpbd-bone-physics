@@ -1,8 +1,8 @@
 use glam::{Quat, Vec3};
 
 use crate::{
-    quat_exp, quat_log, solve_scalar_row, ConstraintKind, PersistentConstraint, Pose, SolverError,
-    SolverWorld, XpbdGradient, XpbdRow,
+    ConstraintKind, PersistentConstraint, Pose, SolverError, SolverWorld, XpbdGradient, XpbdRow,
+    quat_exp, quat_log, solve_scalar_row,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

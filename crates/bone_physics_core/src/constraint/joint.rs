@@ -3,8 +3,8 @@ use glam::{Quat, Vec3};
 use crate::error::validate_nonnegative;
 use crate::pose::validate_vec3;
 use crate::{
-    solve_scalar_row, AngularLimit, BodyId, ConstraintId, ContinuousAngles, SolverError,
-    SolverWorld, XpbdGradient, XpbdRow,
+    AngularLimit, BodyId, ConstraintId, ContinuousAngles, SolverError, SolverWorld, XpbdGradient,
+    XpbdRow, solve_scalar_row,
 };
 
 #[derive(Clone, Debug, PartialEq)]

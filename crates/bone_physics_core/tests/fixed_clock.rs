@@ -29,12 +29,16 @@ fn invalid_step_or_frame_duration_is_rejected() {
     assert!(FixedClock::new(f32::NAN).is_err());
 
     let mut clock = FixedClock::new(1.0 / 120.0).unwrap();
-    assert!(clock
-        .try_accumulate(-0.1, QualityPolicy::DeterministicPreview)
-        .is_err());
-    assert!(clock
-        .try_accumulate(f32::NAN, QualityPolicy::DeterministicPreview)
-        .is_err());
+    assert!(
+        clock
+            .try_accumulate(-0.1, QualityPolicy::DeterministicPreview)
+            .is_err()
+    );
+    assert!(
+        clock
+            .try_accumulate(f32::NAN, QualityPolicy::DeterministicPreview)
+            .is_err()
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use bone_physics_core::{
-    sample_chain_s, BodyId, ChainDesc, CurveInterpolation, CurvePoint, ParameterCurve,
+    BodyId, ChainDesc, CurveInterpolation, CurvePoint, ParameterCurve, sample_chain_s,
 };
 
 fn assert_close(actual: f32, expected: f32) {

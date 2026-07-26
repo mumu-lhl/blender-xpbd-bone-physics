@@ -174,11 +174,7 @@ struct LinkKey(AnchorKey, AnchorKey);
 
 impl LinkKey {
     fn new(a: AnchorKey, b: AnchorKey) -> Self {
-        if a <= b {
-            Self(a, b)
-        } else {
-            Self(b, a)
-        }
+        if a <= b { Self(a, b) } else { Self(b, a) }
     }
 }
 

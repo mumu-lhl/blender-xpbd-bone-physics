@@ -1,7 +1,7 @@
 use glam::{Quat, Vec3};
 
-use crate::error::validate_finite;
 use crate::SolverError;
+use crate::error::validate_finite;
 
 const MIN_QUATERNION_LENGTH_SQUARED: f32 = 1.0e-12;
 const NORMALIZED_TOLERANCE: f32 = 1.0e-5;

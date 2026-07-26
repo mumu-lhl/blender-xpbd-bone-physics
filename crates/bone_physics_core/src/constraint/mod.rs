@@ -3,11 +3,11 @@ mod joint;
 mod recovery;
 mod xpbd;
 
-pub(crate) use angular::{angular_error, solve_angular_constraint, validate_limit};
 pub use angular::{
-    project_angular_limit, AngularLimit, ContinuousAngles, EulerOrder, SwingTwistLimit, XyzLimit,
+    AngularLimit, ContinuousAngles, EulerOrder, SwingTwistLimit, XyzLimit, project_angular_limit,
 };
+pub(crate) use angular::{angular_error, solve_angular_constraint, validate_limit};
 pub use joint::{ConstraintKind, PersistentConstraint};
-pub(crate) use recovery::reference_frame_delta;
 pub use recovery::AnimationTarget;
-pub use xpbd::{solve_scalar_row, RowResult, XpbdGradient, XpbdRow};
+pub(crate) use recovery::reference_frame_delta;
+pub use xpbd::{RowResult, XpbdGradient, XpbdRow, solve_scalar_row};

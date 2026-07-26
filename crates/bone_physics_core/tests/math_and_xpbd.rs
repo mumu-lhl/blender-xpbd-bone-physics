@@ -1,6 +1,6 @@
 use bone_physics_core::{
-    quat_exp, quat_log, solve_scalar_row, world_inverse_inertia, BodyId, BodyInit, BoneBodyDesc,
-    Pose, RowResult, SolverConfig, SolverWorld, Velocity, XpbdGradient, XpbdRow,
+    BodyId, BodyInit, BoneBodyDesc, Pose, RowResult, SolverConfig, SolverWorld, Velocity,
+    XpbdGradient, XpbdRow, quat_exp, quat_log, solve_scalar_row, world_inverse_inertia,
 };
 use glam::{Quat, Vec3};
 

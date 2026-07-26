@@ -1,5 +1,5 @@
 use bone_physics_core::{
-    capsule_manifold, BodyId, Capsule, CapsuleCollider, ColliderId, CollisionFilter, Pose,
+    BodyId, Capsule, CapsuleCollider, ColliderId, CollisionFilter, Pose, capsule_manifold,
 };
 use glam::{Quat, Vec3};
 

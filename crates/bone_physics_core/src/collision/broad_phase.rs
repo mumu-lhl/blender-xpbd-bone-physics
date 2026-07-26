@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use glam::Vec3;
 use parry3d::bounding_volume::Aabb as ParryAabb;
-use parry3d::math::Point as ParryPoint;
+use parry3d::math::Vector as ParryVector;
 use parry3d::partitioning::{Bvh, BvhBuildStrategy};
 
 use super::capsule::PairKey;
@@ -66,8 +66,8 @@ impl Aabb {
 
     fn parry(self) -> ParryAabb {
         ParryAabb::new(
-            ParryPoint::new(self.min.x, self.min.y, self.min.z),
-            ParryPoint::new(self.max.x, self.max.y, self.max.z),
+            ParryVector::new(self.min.x, self.min.y, self.min.z),
+            ParryVector::new(self.max.x, self.max.y, self.max.z),
         )
     }
 }
@@ -278,9 +278,5 @@ fn parry_candidates(entries: &[SweptEntry<'_>]) -> Vec<(usize, usize)> {
 }
 
 fn ordered_indices(a: usize, b: usize) -> (usize, usize) {
-    if a < b {
-        (a, b)
-    } else {
-        (b, a)
-    }
+    if a < b { (a, b) } else { (b, a) }
 }

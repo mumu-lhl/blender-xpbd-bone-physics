@@ -15,17 +15,17 @@ mod world;
 
 pub use body::{BoneBodyDesc, BoneBodyState};
 pub use chain::{
-    build_cross_link_lattice, build_cross_links, sample_chain_s, BodyLookup, ChainDesc,
-    CrossLinkLatticeSpec, CrossLinkSpec,
+    BodyLookup, ChainDesc, CrossLinkLatticeSpec, CrossLinkSpec, build_cross_link_lattice,
+    build_cross_links, sample_chain_s,
 };
 pub use collision::{
-    capsule_manifold, BroadPhaseBackend, Capsule, CapsuleCollider, CapsuleManifold,
-    CollisionFilter, CollisionPipeline, ContactGeometry, PairKey,
+    BroadPhaseBackend, Capsule, CapsuleCollider, CapsuleManifold, CollisionFilter,
+    CollisionPipeline, ContactGeometry, PairKey, capsule_manifold,
 };
 pub use constraint::{
-    project_angular_limit, solve_scalar_row, AngularLimit, AnimationTarget, ConstraintKind,
-    ContinuousAngles, EulerOrder, PersistentConstraint, RowResult, SwingTwistLimit, XpbdGradient,
-    XpbdRow, XyzLimit,
+    AngularLimit, AnimationTarget, ConstraintKind, ContinuousAngles, EulerOrder,
+    PersistentConstraint, RowResult, SwingTwistLimit, XpbdGradient, XpbdRow, XyzLimit,
+    project_angular_limit, solve_scalar_row,
 };
 pub use error::SolverError;
 pub use graph::{ConstraintClass, ConstraintColor, ConstraintSchedule};

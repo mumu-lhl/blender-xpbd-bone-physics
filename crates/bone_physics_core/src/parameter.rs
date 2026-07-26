@@ -1,5 +1,5 @@
-use crate::error::validate_finite;
 use crate::SolverError;
+use crate::error::validate_finite;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CurvePoint {

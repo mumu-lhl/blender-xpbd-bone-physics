@@ -3,8 +3,8 @@ use glam::{EulerRot, Quat, Vec3};
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::pose::validate_vec3;
 use crate::{
-    quat_exp, quat_log, solve_scalar_row, BodyId, PersistentConstraint, Pose, SolverError,
-    SolverWorld, XpbdGradient, XpbdRow,
+    BodyId, PersistentConstraint, Pose, SolverError, SolverWorld, XpbdGradient, XpbdRow, quat_exp,
+    quat_log, solve_scalar_row,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

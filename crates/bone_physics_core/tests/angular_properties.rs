@@ -1,5 +1,5 @@
 use bone_physics_core::{
-    project_angular_limit, AngularLimit, ContinuousAngles, EulerOrder, SwingTwistLimit, XyzLimit,
+    AngularLimit, ContinuousAngles, EulerOrder, SwingTwistLimit, XyzLimit, project_angular_limit,
 };
 use glam::{Quat, Vec3};
 

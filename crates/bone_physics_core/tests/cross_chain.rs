@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use bone_physics_core::{
-    build_cross_link_lattice, build_cross_links, BodyId, BodyLookup, BoneBodyDesc, ChainDesc,
-    ConstraintId, ConstraintKind, CrossLinkLatticeSpec, CrossLinkSpec, CurveInterpolation,
-    CurvePoint, ParameterCurve, Pose,
+    BodyId, BodyLookup, BoneBodyDesc, ChainDesc, ConstraintId, ConstraintKind,
+    CrossLinkLatticeSpec, CrossLinkSpec, CurveInterpolation, CurvePoint, ParameterCurve, Pose,
+    build_cross_link_lattice, build_cross_links,
 };
 use glam::{Quat, Vec3};
 
