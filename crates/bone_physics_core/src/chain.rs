@@ -126,14 +126,14 @@ pub fn build_cross_links(
     } else {
         0
     };
-    let link_count = spec
-        .samples
-        .len()
-        .checked_add(diagonal_count)
-        .ok_or(SolverError::invalid_value(
-            "cross_link_count",
-            f64::INFINITY,
-        ))?;
+    let link_count =
+        spec.samples
+            .len()
+            .checked_add(diagonal_count)
+            .ok_or(SolverError::invalid_value(
+                "cross_link_count",
+                f64::INFINITY,
+            ))?;
     if link_count == 0 {
         return Err(SolverError::invalid_value("cross_link_count", 0.0));
     }
@@ -142,10 +142,7 @@ pub fn build_cross_links(
     spec.first_constraint_id
         .get()
         .checked_add(final_offset)
-        .ok_or(SolverError::invalid_value(
-            "constraint_id",
-            f64::INFINITY,
-        ))?;
+        .ok_or(SolverError::invalid_value("constraint_id", f64::INFINITY))?;
 
     let anchors_a = sample_anchors(&spec.chain_a, &spec.samples, bodies)?;
     let anchors_b = sample_anchors(&spec.chain_b, &spec.samples, bodies)?;
@@ -208,10 +205,7 @@ fn validate_samples(samples: &[f32]) -> Result<(), SolverError> {
     Ok(())
 }
 
-fn validate_body_references(
-    chain: &ChainDesc,
-    bodies: &BodyLookup,
-) -> Result<(), SolverError> {
+fn validate_body_references(chain: &ChainDesc, bodies: &BodyLookup) -> Result<(), SolverError> {
     for body in &chain.bodies {
         bodies.get(*body)?;
     }
@@ -281,10 +275,7 @@ fn push_link(
         .first_constraint_id
         .get()
         .checked_add(offset)
-        .ok_or(SolverError::invalid_value(
-            "constraint_id",
-            f64::INFINITY,
-        ))?;
+        .ok_or(SolverError::invalid_value("constraint_id", f64::INFINITY))?;
     constraints.push(PersistentConstraint::distance(
         ConstraintId::new(raw_id),
         anchor_a.body,
