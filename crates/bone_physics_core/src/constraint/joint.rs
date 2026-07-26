@@ -1,9 +1,10 @@
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::error::validate_nonnegative;
 use crate::pose::validate_vec3;
 use crate::{
-    solve_scalar_row, BodyId, ConstraintId, SolverError, SolverWorld, XpbdGradient, XpbdRow,
+    solve_scalar_row, AngularLimit, BodyId, ConstraintId, ContinuousAngles, SolverError,
+    SolverWorld, XpbdGradient, XpbdRow,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +29,11 @@ pub enum ConstraintKind {
         target_local_anchor: Vec3,
     },
     OrientationRecovery,
+    AngularLimit {
+        rest_relative: Quat,
+        limit: AngularLimit,
+        continuous: ContinuousAngles,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -161,6 +167,31 @@ impl PersistentConstraint {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn angular_limit(
+        id: ConstraintId,
+        body_a: BodyId,
+        body_b: BodyId,
+        rest_relative: Quat,
+        limit: AngularLimit,
+        compliance: f32,
+        damping: f32,
+    ) -> Self {
+        Self::two_body(
+            id,
+            body_a,
+            body_b,
+            compliance,
+            damping,
+            ConstraintKind::AngularLimit {
+                rest_relative,
+                limit,
+                continuous: ContinuousAngles::default(),
+            },
+        )
+    }
+
     fn two_body(
         id: ConstraintId,
         body_a: BodyId,
@@ -203,6 +234,21 @@ impl PersistentConstraint {
                 validate_vec3("constraint_target_local_anchor", *target_local_anchor)?;
             }
             ConstraintKind::OrientationRecovery => {}
+            ConstraintKind::AngularLimit {
+                rest_relative,
+                limit,
+                ..
+            } => {
+                crate::Pose::try_new(Vec3::ZERO, *rest_relative)?;
+                let normalization_error = (rest_relative.length_squared() - 1.0).abs();
+                if normalization_error > 1.0e-5 {
+                    return Err(SolverError::invalid_value(
+                        "rest_relative_normalization",
+                        normalization_error,
+                    ));
+                }
+                crate::constraint::validate_limit(limit)?;
+            }
         }
         if let ConstraintKind::Distance { rest_length, .. } = &self.kind {
             validate_nonnegative("rest_length", *rest_length)?;
@@ -240,6 +286,28 @@ impl PersistentConstraint {
                 min,
                 max,
             } => solve_distance_range(self, world, local_a, local_b, min, max, dt),
+            ConstraintKind::AngularLimit {
+                rest_relative,
+                limit,
+                mut continuous,
+            } => {
+                let result = crate::constraint::solve_angular_constraint(
+                    self,
+                    world,
+                    rest_relative,
+                    &limit,
+                    &mut continuous,
+                    dt,
+                );
+                if let ConstraintKind::AngularLimit {
+                    continuous: stored,
+                    ..
+                } = &mut self.kind
+                {
+                    *stored = continuous;
+                }
+                result
+            }
             ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(()),
         }
     }
@@ -274,6 +342,17 @@ impl PersistentConstraint {
                 let distance = point_a.distance(point_b);
                 Ok((*min - distance).max(0.0).max((distance - *max).max(0.0)))
             }
+            ConstraintKind::AngularLimit {
+                rest_relative,
+                limit,
+                continuous,
+            } => crate::constraint::angular_error(
+                self,
+                world,
+                *rest_relative,
+                limit,
+                *continuous,
+            ),
             ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(0.0),
         }
     }
@@ -296,7 +375,9 @@ impl PersistentConstraint {
             | ConstraintKind::DistanceRange {
                 local_a, local_b, ..
             } => damp_distance(self, world, local_a, local_b, dt),
-            ConstraintKind::Attachment { .. } | ConstraintKind::OrientationRecovery => Ok(()),
+            ConstraintKind::Attachment { .. }
+            | ConstraintKind::OrientationRecovery
+            | ConstraintKind::AngularLimit { .. } => Ok(()),
         }
     }
 }
