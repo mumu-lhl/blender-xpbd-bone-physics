@@ -85,13 +85,7 @@ impl ConstraintSchedule {
             let colors = self.colors(class);
             if iteration % 2 == 0 {
                 for color in colors {
-                    result.extend(
-                        color
-                            .constraint_ids
-                            .iter()
-                            .copied()
-                            .map(|id| (class, id)),
-                    );
+                    result.extend(color.constraint_ids.iter().copied().map(|id| (class, id)));
                 }
             } else {
                 for color in colors.iter().rev() {
