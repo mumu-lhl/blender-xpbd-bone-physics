@@ -40,10 +40,7 @@ fn solve_xyz_lock(initial: Vec3, lower: Vec3, upper: Vec3) -> Vec3 {
             gravity: Vec3::ZERO,
             fixed_dt: 1.0 / 120.0,
         },
-        vec![
-            body(1, Quat::IDENTITY, false),
-            body(2, rotation, true),
-        ],
+        vec![body(1, Quat::IDENTITY, false), body(2, rotation, true)],
     )
     .unwrap();
     world
@@ -113,10 +110,7 @@ fn twist_inside_range_is_unchanged_by_an_unconstrained_swing_cone() {
             gravity: Vec3::ZERO,
             fixed_dt: 1.0 / 120.0,
         },
-        vec![
-            body(1, Quat::IDENTITY, false),
-            body(2, initial, true),
-        ],
+        vec![body(1, Quat::IDENTITY, false), body(2, initial, true)],
     )
     .unwrap();
     world
