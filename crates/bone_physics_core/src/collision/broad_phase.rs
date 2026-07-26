@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use glam::Vec3;
 use parry3d::bounding_volume::Aabb as ParryAabb;
 use parry3d::math::Point as ParryPoint;
-use parry3d::partitioning::Qbvh;
+use parry3d::partitioning::{Bvh, BvhBuildStrategy};
 
 use super::capsule::PairKey;
 use super::shape::CapsuleCollider;
@@ -263,13 +263,12 @@ fn parry_candidates(entries: &[SweptEntry<'_>]) -> Vec<(usize, usize)> {
         .iter()
         .map(|entry| entry.bounds.parry())
         .collect::<Vec<_>>();
-    let mut bvh = Qbvh::<usize>::new();
-    bvh.clear_and_rebuild(aabbs.iter().copied().enumerate(), 0.0);
+    let bvh = Bvh::from_leaves(BvhBuildStrategy::default(), &aabbs);
     let mut result = BTreeSet::new();
     for (index, aabb) in aabbs.iter().enumerate() {
-        let mut intersections = Vec::new();
-        bvh.intersect_aabb(aabb, &mut intersections);
-        for other in intersections {
+        for other in bvh.intersect_aabb(aabb) {
+            let other = usize::try_from(other)
+                .expect("BVH leaf IDs originating from the AABB slice fit usize");
             if index != other {
                 result.insert(ordered_indices(index, other));
             }
