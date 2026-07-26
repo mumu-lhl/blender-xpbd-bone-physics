@@ -83,6 +83,25 @@ fn parameter_curves_reject_invalid_points_and_samples() {
 }
 
 #[test]
+fn parameter_curve_sampling_revalidates_publicly_mutated_points() {
+    let mut curve = ParameterCurve::try_new(
+        vec![
+            CurvePoint::new(0.0, 1.0, 0.0),
+            CurvePoint::new(1.0, 2.0, 0.0),
+        ],
+        CurveInterpolation::Linear,
+    )
+    .unwrap();
+
+    curve.points[0].value = f32::NAN;
+    assert!(curve.sample(0.0).is_err());
+
+    curve.points[0] = CurvePoint::new(0.75, 1.0, 0.0);
+    curve.points[1] = CurvePoint::new(0.25, 2.0, 0.0);
+    assert!(curve.sample(0.5).is_err());
+}
+
+#[test]
 fn chains_reject_empty_zero_and_non_finite_geometry() {
     let empty = ChainDesc {
         bodies: Vec::new(),
