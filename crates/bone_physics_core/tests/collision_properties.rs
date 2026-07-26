@@ -60,8 +60,16 @@ fn deterministic_degenerate_capsule_cases_are_symmetric_and_never_non_finite() {
         );
         let b = collider(
             2,
-            if case % 13 == 0 { local_a } else { next_vec3(&mut state) },
-            if case % 13 == 0 { local_b } else { next_vec3(&mut state) },
+            if case % 13 == 0 {
+                local_a
+            } else {
+                next_vec3(&mut state)
+            },
+            if case % 13 == 0 {
+                local_b
+            } else {
+                next_vec3(&mut state)
+            },
             0.05 + next_scalar(&mut state).abs() * 0.2,
             translation_b,
             next_vec3(&mut state),
