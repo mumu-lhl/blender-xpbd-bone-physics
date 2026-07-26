@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 glam = "0.30"
-parry3d = "0.25.1"
+parry3d = { version = "0.21.1", default-features = false, features = ["required-features", "std", "alloc"] }
 thiserror = "2.0"
 
 [dev-dependencies]
