@@ -160,9 +160,7 @@ fn exact_internal_boundary_selects_the_following_bone() {
     assert_eq!(constraints.len(), 1);
     assert_eq!(constraints[0].body_a, BodyId::new(31));
     match constraints[0].kind.clone() {
-        ConstraintKind::Distance {
-            local_a, ..
-        } => {
+        ConstraintKind::Distance { local_a, .. } => {
             assert_eq!(local_a, Vec3::ZERO);
         }
         _ => panic!("expected a distance constraint"),
