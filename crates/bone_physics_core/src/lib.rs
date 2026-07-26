@@ -4,6 +4,7 @@ mod body;
 mod chain;
 mod constraint;
 mod error;
+mod graph;
 mod id;
 mod math;
 mod parameter;
@@ -22,6 +23,7 @@ pub use constraint::{
     XpbdRow, XyzLimit,
 };
 pub use error::SolverError;
+pub use graph::{ConstraintClass, ConstraintColor, ConstraintSchedule};
 pub use id::{BodyId, ColliderId, ConstraintId};
 pub use math::{quat_exp, quat_log, world_inverse_inertia};
 pub use parameter::{CurveInterpolation, CurvePoint, ParameterCurve};
