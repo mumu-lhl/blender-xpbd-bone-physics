@@ -65,14 +65,8 @@ impl CollisionPipeline {
         {
             return Ok(false);
         }
-        if collider_a
-            .filter
-            .excluded_bodies
-            .contains(&collider_b.body)
-            || collider_b
-                .filter
-                .excluded_bodies
-                .contains(&collider_a.body)
+        if collider_a.filter.excluded_bodies.contains(&collider_b.body)
+            || collider_b.filter.excluded_bodies.contains(&collider_a.body)
         {
             return Ok(false);
         }
@@ -82,14 +76,8 @@ impl CollisionPipeline {
                 continue;
             }
             if edge.hard_joint
-                || collider_a
-                    .filter
-                    .excluded_constraints
-                    .contains(&edge.id)
-                || collider_b
-                    .filter
-                    .excluded_constraints
-                    .contains(&edge.id)
+                || collider_a.filter.excluded_constraints.contains(&edge.id)
+                || collider_b.filter.excluded_constraints.contains(&edge.id)
             {
                 return Ok(false);
             }
