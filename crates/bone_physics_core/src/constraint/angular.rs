@@ -41,7 +41,7 @@ impl EulerOrder {
         }
     }
 
-    fn from_xyz(self, xyz: Vec3) -> Quat {
+    fn to_quat(self, xyz: Vec3) -> Quat {
         let (a, b, c) = match self {
             Self::Xyz => (xyz.x, xyz.y, xyz.z),
             Self::Xzy => (xyz.x, xyz.z, xyz.y),
@@ -114,7 +114,7 @@ pub fn project_angular_limit(
         AngularLimit::XyzBox(xyz) => {
             let wrapped = xyz.order.to_xyz(candidate.to_euler(xyz.order.glam()));
             let unwrapped = continuous.unwrap(wrapped);
-            xyz.order.from_xyz(unwrapped.clamp(xyz.lower, xyz.upper))
+            xyz.order.to_quat(unwrapped.clamp(xyz.lower, xyz.upper))
         }
         AngularLimit::SwingTwist(swing_twist) => project_swing_twist(candidate, *swing_twist),
     };
@@ -126,10 +126,7 @@ pub(crate) fn validate_limit(limit: &AngularLimit) -> Result<(), SolverError> {
         AngularLimit::XyzBox(xyz) => {
             validate_vec3("angular_lower", xyz.lower)?;
             validate_vec3("angular_upper", xyz.upper)?;
-            if xyz.lower.x > xyz.upper.x
-                || xyz.lower.y > xyz.upper.y
-                || xyz.lower.z > xyz.upper.z
-            {
+            if xyz.lower.x > xyz.upper.x || xyz.lower.y > xyz.upper.y || xyz.lower.z > xyz.upper.z {
                 return Err(SolverError::invalid_value(
                     "angular_range",
                     (xyz.upper - xyz.lower).min_element(),
@@ -255,8 +252,10 @@ fn project_swing_twist(candidate: Quat, limit: SwingTwistLimit) -> Quat {
         swing
     };
 
-    let signed_twist =
-        2.0 * Vec3::new(twist.x, twist.y, twist.z).dot(axis).atan2(twist.w);
+    let signed_twist = 2.0
+        * Vec3::new(twist.x, twist.y, twist.z)
+            .dot(axis)
+            .atan2(twist.w);
     let projected_twist =
         Quat::from_axis_angle(axis, signed_twist.clamp(limit.min_twist, limit.max_twist));
     (projected_swing * projected_twist).normalize()
