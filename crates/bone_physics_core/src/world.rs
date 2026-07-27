@@ -485,10 +485,16 @@ impl SolverWorld {
             let radius_a = collider_a.shape.effective_radius()?;
             let radius_b = collider_b.shape.effective_radius()?;
 
-            for geometry in manifold.points {
+            let manifold_point_count = manifold.points.len();
+            for (manifold_point_index, geometry) in manifold.points.into_iter().enumerate() {
                 let center_a = geometry.point_a - geometry.normal * radius_a;
                 let center_b = geometry.point_b + geometry.normal * radius_b;
-                let feature = capsule_contact_feature(collider_a, center_a);
+                let feature = capsule_contact_feature(
+                    collider_a,
+                    center_a,
+                    manifold_point_index,
+                    manifold_point_count,
+                )?;
                 let key = ContactKey::new(pair, feature, feature);
                 let previous = self
                     .cached_contacts
@@ -817,15 +823,26 @@ fn local_point(pose: Pose, point: Vec3) -> Vec3 {
     pose.rotation.conjugate() * (point - pose.translation)
 }
 
-fn capsule_contact_feature(collider: &CapsuleCollider, surface_point: Vec3) -> u32 {
+fn capsule_contact_feature(
+    collider: &CapsuleCollider,
+    surface_point: Vec3,
+    manifold_point_index: usize,
+    manifold_point_count: usize,
+) -> Result<u32, SolverError> {
+    if manifold_point_count > 1 {
+        return u32::try_from(manifold_point_index).map_err(|_| {
+            SolverError::invalid_value("contact_feature_index", manifold_point_index as f64)
+        });
+    }
+
     let local_surface = local_point(collider.pose, surface_point);
     let axis = collider.shape.local_b - collider.shape.local_a;
     let axis_length_squared = axis.length_squared();
     if axis_length_squared <= MIN_CONTACT_DENOMINATOR {
-        return 0;
+        return Ok(0);
     }
     let projection = (local_surface - collider.shape.local_a).dot(axis) / axis_length_squared;
-    u32::from(projection > 0.5)
+    Ok(u32::from(projection > 0.5))
 }
 
 fn tangent_basis(normal: Vec3) -> [Vec3; 2] {

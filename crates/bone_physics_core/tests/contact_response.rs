@@ -447,6 +447,113 @@ fn unequal_parallel_capsules_keep_two_same_half_feature_slots_distinct() {
     assert_eq!(second[1].1.lambdas, Default::default());
 }
 
+fn near_parallel_boundary_world(
+    reverse_endpoints: bool,
+    reverse_registration: bool,
+) -> SolverWorld {
+    let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
+    let angle = (0.02_f32 / 1.5).asin();
+    let mut rotating = body(2, Vec3::new(7.5, 0.199, 0.0), Vec3::ZERO, false);
+    rotating.pose =
+        Pose::try_new(rotating.pose.translation, Quat::from_rotation_z(2.0 * angle)).unwrap();
+    rotating.velocity.angular = -Vec3::Z * (angle / DT);
+
+    let (a0, a1) = if reverse_endpoints {
+        (Vec3::X * 10.0, Vec3::ZERO)
+    } else {
+        (Vec3::ZERO, Vec3::X * 10.0)
+    };
+    let (b0, b1) = if reverse_endpoints {
+        (Vec3::X * 1.5, -Vec3::X * 1.5)
+    } else {
+        (-Vec3::X * 1.5, Vec3::X * 1.5)
+    };
+    let mut colliders = vec![
+        capsule_with_radius(10, 1, a0, a1, 0.1, material),
+        capsule_with_radius(20, 2, b0, b1, 0.1, material),
+    ];
+    if reverse_registration {
+        colliders.reverse();
+    }
+
+    let mut result = world(Vec3::ZERO, vec![body(1, Vec3::ZERO, Vec3::ZERO, false), rotating]);
+    result.set_colliders(colliders).unwrap();
+    result
+}
+
+#[test]
+fn near_parallel_conditional_boundary_keeps_each_physical_slot() {
+    // With theta = asin(0.02 / 1.5), B's predicted endpoint heights progress
+    // from [0.179, 0.219] through [0.199, 0.199] to [0.219, 0.179].
+    // Against the 0.2 m radius sum this admits the lower x=6 boundary, then
+    // both x=6/x=9 boundaries, then only the upper x=9 boundary.
+    let mut forward = near_parallel_boundary_world(false, false);
+    let mut reversed_registration = near_parallel_boundary_world(false, true);
+
+    forward.substep(DT, 1.0, options()).unwrap();
+    reversed_registration.substep(DT, 1.0, options()).unwrap();
+    let first = forward.cached_contacts();
+    assert_eq!(first, reversed_registration.cached_contacts());
+    assert_eq!(first.len(), 1);
+    assert!((first[0].1.local_a.x - 6.0).abs() <= 1.0e-3);
+    assert_eq!(first[0].1.age, 1);
+    assert_eq!(first[0].1.lambdas, Default::default());
+
+    forward.substep(DT, 1.0, options()).unwrap();
+    reversed_registration.substep(DT, 1.0, options()).unwrap();
+    let second = forward.cached_contacts();
+    assert_eq!(second, reversed_registration.cached_contacts());
+    assert_eq!(second.len(), 2);
+    assert!(second[0].0 < second[1].0);
+    let (lower, upper) = if second[0].1.local_a.x < second[1].1.local_a.x {
+        (&second[0], &second[1])
+    } else {
+        (&second[1], &second[0])
+    };
+    assert!((lower.1.local_a.x - 6.0).abs() <= 1.0e-3);
+    assert!((upper.1.local_a.x - 9.0).abs() <= 1.0e-3);
+    assert_eq!(lower.0, first[0].0);
+    assert_eq!(lower.1.age, first[0].1.age + 1);
+    assert_eq!(lower.1.lambdas, first[0].1.lambdas);
+    assert_eq!(upper.1.age, 1);
+    assert_eq!(upper.1.lambdas, Default::default());
+
+    forward.substep(DT, 1.0, options()).unwrap();
+    reversed_registration.substep(DT, 1.0, options()).unwrap();
+    let third = forward.cached_contacts();
+    assert_eq!(third, reversed_registration.cached_contacts());
+    assert_eq!(third.len(), 1);
+    assert!((third[0].1.local_a.x - 9.0).abs() <= 1.0e-3);
+    assert_eq!(third[0].0, upper.0);
+    assert_eq!(third[0].1.age, upper.1.age + 1);
+    assert_eq!(third[0].1.lambdas, upper.1.lambdas);
+}
+
+#[test]
+fn near_parallel_contact_slots_ignore_local_endpoint_order() {
+    let mut canonical = near_parallel_boundary_world(false, false);
+    let mut registration_reversed = near_parallel_boundary_world(false, true);
+    let mut endpoints_reversed = near_parallel_boundary_world(true, false);
+    let mut both_reversed = near_parallel_boundary_world(true, true);
+
+    for expected_count in [1, 2, 1] {
+        for world in [
+            &mut canonical,
+            &mut registration_reversed,
+            &mut endpoints_reversed,
+            &mut both_reversed,
+        ] {
+            world.substep(DT, 1.0, options()).unwrap();
+        }
+
+        let expected = canonical.cached_contacts();
+        assert_eq!(expected.len(), expected_count);
+        assert_eq!(registration_reversed.cached_contacts(), expected);
+        assert_eq!(endpoints_reversed.cached_contacts(), expected);
+        assert_eq!(both_reversed.cached_contacts(), expected);
+    }
+}
+
 #[test]
 fn final_diagnostics_drop_a_generated_contact_separated_by_a_constraint() {
     let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
