@@ -11,6 +11,12 @@ use crate::{
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 
 const MIN_CONTACT_DENOMINATOR: f32 = 1.0e-12;
+// Warm starts may move by at most one effective pair radius, and normals must
+// stay within about 18 degrees. Dropping a marginal match is safer than
+// applying a cached impulse at an unrelated feature.
+const CONTACT_MATCH_RADIUS_SCALE: f64 = 1.0;
+const CONTACT_MATCH_WORLD_MIDPOINT_WEIGHT: f64 = 2.0;
+const CONTACT_MATCH_NORMAL_MIN_DOT: f32 = 0.95;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -475,6 +481,8 @@ impl SolverWorld {
         let mut generated = Vec::new();
 
         for pair in candidates {
+            let previous_a = collider_by_id(&previous, pair.first())?;
+            let previous_b = collider_by_id(&previous, pair.second())?;
             let collider_a = collider_by_id(&predicted, pair.first())?;
             let collider_b = collider_by_id(&predicted, pair.second())?;
             let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
@@ -484,6 +492,13 @@ impl SolverWorld {
             };
             let radius_a = collider_a.shape.effective_radius()?;
             let radius_b = collider_b.shape.effective_radius()?;
+            let match_context = ContactMatchContext {
+                previous_a: previous_a.pose,
+                previous_b: previous_b.pose,
+                current_a: collider_a.pose,
+                current_b: collider_b.pose,
+                radius_sum: radius_a + radius_b,
+            };
             let mut current_contacts = Vec::with_capacity(manifold.points.len());
 
             for geometry in manifold.points {
@@ -506,7 +521,12 @@ impl SolverWorld {
                 .filter(|(key, _)| key.pair == pair)
                 .copied()
                 .collect();
-            generated.extend(assign_contact_slots(pair, current_contacts, &previous_contacts)?);
+            generated.extend(assign_contact_slots(
+                pair,
+                current_contacts,
+                &previous_contacts,
+                match_context,
+            )?);
         }
 
         generated.sort_by_key(|(key, _)| *key);
@@ -808,10 +828,20 @@ fn local_point(pose: Pose, point: Vec3) -> Vec3 {
     pose.rotation.conjugate() * (point - pose.translation)
 }
 
+#[derive(Clone, Copy)]
+struct ContactMatchContext {
+    previous_a: Pose,
+    previous_b: Pose,
+    current_a: Pose,
+    current_b: Pose,
+    radius_sum: f32,
+}
+
 fn assign_contact_slots(
     pair: PairKey,
     mut current: Vec<CachedContact>,
     previous: &[(ContactKey, CachedContact)],
+    context: ContactMatchContext,
 ) -> Result<Vec<(ContactKey, CachedContact)>, SolverError> {
     if current.len() > 2 {
         return Err(SolverError::invalid_value("contact_manifold_points", current.len() as f64));
@@ -820,8 +850,17 @@ fn assign_contact_slots(
         return Err(SolverError::invalid_value("cached_contact_count", previous.len() as f64));
     }
 
+    let mut reserved_keys = Vec::with_capacity(previous.len() + current.len());
+    for (key, contact) in previous {
+        if key.pair != pair || reserved_keys.contains(key) {
+            return Err(SolverError::invalid_value("cached_contact_feature", key.feature_a));
+        }
+        contact.validate()?;
+        reserved_keys.push(*key);
+    }
+
     current.sort_by(contact_anchor_order);
-    let matches = match_contact_anchors(&current, previous)?;
+    let matches = match_contact_anchors(&current, previous, context)?;
     let mut keys: Vec<Option<ContactKey>> = vec![None; current.len()];
     let mut used_keys = Vec::with_capacity(current.len());
 
@@ -850,7 +889,7 @@ fn assign_contact_slots(
         let mut slot = 0_u32;
         let assigned = loop {
             let candidate = ContactKey::new(pair, slot, slot);
-            if !used_keys.contains(&candidate) {
+            if !reserved_keys.contains(&candidate) && !used_keys.contains(&candidate) {
                 break candidate;
             }
             slot = slot
@@ -872,34 +911,40 @@ fn assign_contact_slots(
 fn match_contact_anchors(
     current: &[CachedContact],
     previous: &[(ContactKey, CachedContact)],
+    context: ContactMatchContext,
 ) -> Result<Vec<Option<usize>>, SolverError> {
     let mut matches = vec![None; current.len()];
     match (current.len(), previous.len()) {
         (0, _) | (_, 0) => {}
-        (1, 1) => matches[0] = Some(0),
+        (1, 1) => {
+            if contact_match_score(&current[0], &previous[0].1, context)?.is_some() {
+                matches[0] = Some(0);
+            }
+        }
         (1, 2) => {
-            let first = contact_anchor_distance(&current[0], &previous[0].1)?;
-            let second = contact_anchor_distance(&current[0], &previous[1].1)?;
-            matches[0] = Some(if second < first { 1 } else { 0 });
+            let first = contact_match_score(&current[0], &previous[0].1, context)?;
+            let second = contact_match_score(&current[0], &previous[1].1, context)?;
+            matches[0] = preferred_score(first, second);
         }
         (2, 1) => {
-            let first = contact_anchor_distance(&current[0], &previous[0].1)?;
-            let second = contact_anchor_distance(&current[1], &previous[0].1)?;
-            let current_index = if second < first { 1 } else { 0 };
-            matches[current_index] = Some(0);
+            let first = contact_match_score(&current[0], &previous[0].1, context)?;
+            let second = contact_match_score(&current[1], &previous[0].1, context)?;
+            if let Some(current_index) = preferred_score(first, second) {
+                matches[current_index] = Some(0);
+            }
         }
         (2, 2) => {
-            let direct = contact_anchor_distance(&current[0], &previous[0].1)?
-                + contact_anchor_distance(&current[1], &previous[1].1)?;
-            let crossed = contact_anchor_distance(&current[0], &previous[1].1)?
-                + contact_anchor_distance(&current[1], &previous[0].1)?;
-            if direct <= crossed {
-                matches[0] = Some(0);
-                matches[1] = Some(1);
-            } else {
-                matches[0] = Some(1);
-                matches[1] = Some(0);
-            }
+            let scores = [
+                [
+                    contact_match_score(&current[0], &previous[0].1, context)?,
+                    contact_match_score(&current[0], &previous[1].1, context)?,
+                ],
+                [
+                    contact_match_score(&current[1], &previous[0].1, context)?,
+                    contact_match_score(&current[1], &previous[1].1, context)?,
+                ],
+            ];
+            match_contact_pairs(&mut matches, scores);
         }
         _ => {
             return Err(SolverError::invalid_value(
@@ -911,16 +956,100 @@ fn match_contact_anchors(
     Ok(matches)
 }
 
-fn contact_anchor_distance(
+fn preferred_score(first: Option<f64>, second: Option<f64>) -> Option<usize> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(if second < first { 1 } else { 0 }),
+        (Some(_), None) => Some(0),
+        (None, Some(_)) => Some(1),
+        (None, None) => None,
+    }
+}
+
+fn match_contact_pairs(matches: &mut [Option<usize>], scores: [[Option<f64>; 2]; 2]) {
+    let direct = scores[0][0].zip(scores[1][1]).map(|(a, b)| a + b);
+    let crossed = scores[0][1].zip(scores[1][0]).map(|(a, b)| a + b);
+    match (direct, crossed) {
+        (Some(direct), Some(crossed)) if crossed < direct => {
+            matches[0] = Some(1);
+            matches[1] = Some(0);
+        }
+        (Some(_), _) => {
+            matches[0] = Some(0);
+            matches[1] = Some(1);
+        }
+        (None, Some(_)) => {
+            matches[0] = Some(1);
+            matches[1] = Some(0);
+        }
+        (None, None) => {
+            let mut best = None;
+            for (current_index, row) in scores.into_iter().enumerate() {
+                for (previous_index, score) in row.into_iter().enumerate() {
+                    let Some(score) = score else {
+                        continue;
+                    };
+                    if best.is_none_or(|(best_score, _, _)| score < best_score) {
+                        best = Some((score, current_index, previous_index));
+                    }
+                }
+            }
+            if let Some((_, current_index, previous_index)) = best {
+                matches[current_index] = Some(previous_index);
+            }
+        }
+    }
+}
+
+fn contact_match_score(
     current: &CachedContact,
     previous: &CachedContact,
-) -> Result<f64, SolverError> {
-    let distance = vec3_distance_squared(current.local_a, previous.local_a)
-        + vec3_distance_squared(current.local_b, previous.local_b);
-    if !distance.is_finite() {
-        return Err(SolverError::invalid_value("contact_anchor_distance", distance));
+    context: ContactMatchContext,
+) -> Result<Option<f64>, SolverError> {
+    let normal_dot = current.normal.dot(previous.normal);
+    if !normal_dot.is_finite() {
+        return Err(SolverError::invalid_value("contact_normal_dot", normal_dot));
     }
-    Ok(distance)
+    if normal_dot < CONTACT_MATCH_NORMAL_MIN_DOT {
+        return Ok(None);
+    }
+
+    let local_score = vec3_distance_squared(current.local_a, previous.local_a)
+        + vec3_distance_squared(current.local_b, previous.local_b);
+    let previous_midpoint =
+        contact_world_midpoint(previous, context.previous_a, context.previous_b)?;
+    let current_midpoint = contact_world_midpoint(current, context.current_a, context.current_b)?;
+    let world_score = CONTACT_MATCH_WORLD_MIDPOINT_WEIGHT
+        * vec3_distance_squared(current_midpoint, previous_midpoint);
+    let score = local_score.min(world_score);
+
+    let radius_sum = f64::from(context.radius_sum);
+    if !radius_sum.is_finite() || radius_sum <= 0.0 {
+        return Err(SolverError::invalid_value("contact_match_radius_sum", radius_sum));
+    }
+    // The local metric sums two squared anchor displacements. Weighting the
+    // world midpoint by two gives it the same scale when both anchors
+    // translate together, so the same factor also scales the radius threshold.
+    let maximum_displacement = CONTACT_MATCH_RADIUS_SCALE * radius_sum;
+    let maximum_score =
+        CONTACT_MATCH_WORLD_MIDPOINT_WEIGHT * maximum_displacement * maximum_displacement;
+    if !score.is_finite() || !maximum_score.is_finite() {
+        return Err(SolverError::invalid_value("contact_match_score", score));
+    }
+    Ok((score <= maximum_score).then_some(score))
+}
+
+fn contact_world_midpoint(
+    contact: &CachedContact,
+    pose_a: Pose,
+    pose_b: Pose,
+) -> Result<Vec3, SolverError> {
+    let world_a = pose_a.translation + pose_a.rotation * contact.local_a;
+    let world_b = pose_b.translation + pose_b.rotation * contact.local_b;
+    validate_vec3("contact_world_anchor_a", world_a)?;
+    validate_vec3("contact_world_anchor_b", world_b)?;
+    let midpoint = (world_a + world_b) * 0.5;
+    validate_vec3("contact_world_midpoint", midpoint)?;
+    Ok(midpoint)
 }
 
 fn vec3_distance_squared(a: Vec3, b: Vec3) -> f64 {
