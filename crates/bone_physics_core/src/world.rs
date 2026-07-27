@@ -11,6 +11,7 @@ use crate::{
 use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 
 const MIN_CONTACT_DENOMINATOR: f32 = 1.0e-12;
+const CONTACT_SEPARATION_TOLERANCE: f32 = 1.0e-6;
 // Warm starts may move by at most one effective pair radius, and normals must
 // stay within about 18 degrees. Dropping a marginal match is safer than
 // applying a cached impulse at an unrelated feature.
@@ -280,6 +281,12 @@ impl SolverWorld {
         })();
         self.constraints = constraints;
         damping_result?;
+
+        let colliders = self.colliders.clone();
+        let mut contacts = core::mem::take(&mut self.cached_contacts);
+        let velocity_result = self.apply_contact_velocity_response(&colliders, &mut contacts);
+        self.cached_contacts = contacts;
+        velocity_result?;
 
         self.target_alpha = target_alpha;
         let _ = options.contact_iterations;
@@ -659,6 +666,233 @@ impl SolverWorld {
             linear_b * properties_b.inverse_mass * delta_lambda,
             properties_b.world_inverse_inertia * angular_b * delta_lambda,
             CorrectionKind::NonVelocityContact,
+        )
+    }
+
+    fn apply_contact_velocity_response(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        contacts: &mut [(ContactKey, CachedContact)],
+    ) -> Result<(), SolverError> {
+        for (key, contact) in contacts {
+            self.solve_contact_velocity(colliders, *key, contact)?;
+        }
+        Ok(())
+    }
+
+    fn solve_contact_velocity(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        key: ContactKey,
+        contact: &mut CachedContact,
+    ) -> Result<(), SolverError> {
+        contact.validate()?;
+        contact.lambdas.tangents = [0.0; 2];
+
+        let collider_a = collider_desc_by_id(colliders, key.pair.first())?;
+        let collider_b = collider_desc_by_id(colliders, key.pair.second())?;
+        let radius_a = collider_a.shape.effective_radius()?;
+        let radius_b = collider_b.shape.effective_radius()?;
+        let radius_sum = radius_a + radius_b;
+        validate_nonnegative("contact_radius_sum", radius_sum)?;
+
+        let (center_a, center_offset_a) =
+            self.anchor_geometry(collider_a.body, contact.local_a)?;
+        let (center_b, center_offset_b) =
+            self.anchor_geometry(collider_b.body, contact.local_b)?;
+        let centerline_separation = center_a.distance(center_b);
+        validate_nonnegative("contact_centerline_separation", centerline_separation)?;
+        if centerline_separation > radius_sum + CONTACT_SEPARATION_TOLERANCE {
+            return Ok(());
+        }
+
+        let surface_offset_a = center_offset_a + contact.normal * radius_a;
+        let surface_offset_b = center_offset_b - contact.normal * radius_b;
+        validate_vec3("contact_surface_offset_a", surface_offset_a)?;
+        validate_vec3("contact_surface_offset_b", surface_offset_b)?;
+
+        let friction_product = collider_a.material.friction * collider_b.material.friction;
+        let combined_friction = friction_product.sqrt();
+        let combined_restitution = collider_a
+            .material
+            .restitution
+            .max(collider_b.material.restitution);
+        validate_nonnegative("combined_contact_friction", combined_friction)?;
+        validate_nonnegative("combined_contact_restitution", combined_restitution)?;
+
+        let relative_velocity = self.contact_relative_surface_velocity(
+            collider_a.body,
+            collider_b.body,
+            surface_offset_a,
+            surface_offset_b,
+        )?;
+        let normal_velocity = relative_velocity.dot(contact.normal);
+        validate_finite("contact_normal_velocity", normal_velocity)?;
+        if normal_velocity >= 0.0 {
+            return Ok(());
+        }
+
+        let restitution = if contact.age == 1
+            && self.contact_pair_was_separated(collider_a, collider_b, contact.normal)?
+        {
+            combined_restitution
+        } else {
+            0.0
+        };
+        let target_normal_velocity = -restitution * normal_velocity;
+        validate_nonnegative("contact_target_normal_velocity", target_normal_velocity)?;
+
+        let normal_inverse_mass = self.contact_inverse_mass(
+            collider_a.body,
+            collider_b.body,
+            -contact.normal,
+            contact.normal,
+            -surface_offset_a.cross(contact.normal),
+            surface_offset_b.cross(contact.normal),
+        )?;
+        if normal_inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+        let normal_impulse =
+            ((target_normal_velocity - normal_velocity) / normal_inverse_mass).max(0.0);
+        validate_nonnegative("contact_normal_velocity_impulse", normal_impulse)?;
+        if normal_impulse == 0.0 {
+            return Ok(());
+        }
+        let maximum_friction_impulse = combined_friction * normal_impulse;
+        validate_nonnegative(
+            "contact_maximum_friction_impulse",
+            maximum_friction_impulse,
+        )?;
+        self.apply_contact_velocity_impulse(
+            collider_a.body,
+            collider_b.body,
+            surface_offset_a,
+            surface_offset_b,
+            contact.normal,
+            normal_impulse,
+        )?;
+
+        let relative_velocity = self.contact_relative_surface_velocity(
+            collider_a.body,
+            collider_b.body,
+            surface_offset_a,
+            surface_offset_b,
+        )?;
+        let tangential_velocity =
+            relative_velocity - contact.normal * relative_velocity.dot(contact.normal);
+        validate_vec3("contact_tangential_velocity", tangential_velocity)?;
+        let tangential_speed = tangential_velocity.length();
+        validate_nonnegative("contact_tangential_speed", tangential_speed)?;
+        if tangential_speed <= MIN_CONTACT_DENOMINATOR.sqrt() {
+            return Ok(());
+        }
+
+        let tangent = tangential_velocity / tangential_speed;
+        validate_vec3("contact_tangent_direction", tangent)?;
+        let tangent_inverse_mass = self.contact_inverse_mass(
+            collider_a.body,
+            collider_b.body,
+            -tangent,
+            tangent,
+            -surface_offset_a.cross(tangent),
+            surface_offset_b.cross(tangent),
+        )?;
+        if tangent_inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+
+        let tangent_impulse = (-tangential_speed / tangent_inverse_mass)
+            .clamp(-maximum_friction_impulse, maximum_friction_impulse);
+        validate_finite("contact_tangent_velocity_impulse", tangent_impulse)?;
+        if tangent_impulse == 0.0 {
+            return Ok(());
+        }
+        self.apply_contact_velocity_impulse(
+            collider_a.body,
+            collider_b.body,
+            surface_offset_a,
+            surface_offset_b,
+            tangent,
+            tangent_impulse,
+        )?;
+
+        let tangent_impulse_vector = tangent * tangent_impulse;
+        contact.lambdas.tangents = [
+            tangent_impulse_vector.dot(contact.tangents[0]),
+            tangent_impulse_vector.dot(contact.tangents[1]),
+        ];
+        contact.lambdas.validate()
+    }
+
+    fn contact_relative_surface_velocity(
+        &self,
+        body_a: BodyId,
+        body_b: BodyId,
+        surface_offset_a: Vec3,
+        surface_offset_b: Vec3,
+    ) -> Result<Vec3, SolverError> {
+        let state_a = self
+            .body(body_a)
+            .ok_or(SolverError::MissingBody(body_a.get()))?;
+        let state_b = self
+            .body(body_b)
+            .ok_or(SolverError::MissingBody(body_b.get()))?;
+        let velocity_a = state_a.velocity.linear + state_a.velocity.angular.cross(surface_offset_a);
+        let velocity_b = state_b.velocity.linear + state_b.velocity.angular.cross(surface_offset_b);
+        let relative_velocity = velocity_b - velocity_a;
+        validate_vec3("contact_relative_surface_velocity", relative_velocity)?;
+        Ok(relative_velocity)
+    }
+
+    fn contact_pair_was_separated(
+        &self,
+        collider_a: &CapsuleColliderDesc,
+        collider_b: &CapsuleColliderDesc,
+        cached_normal: Vec3,
+    ) -> Result<bool, SolverError> {
+        let state_a = self
+            .body(collider_a.body)
+            .ok_or(SolverError::MissingBody(collider_a.body.get()))?;
+        let state_b = self
+            .body(collider_b.body)
+            .ok_or(SolverError::MissingBody(collider_b.body.get()))?;
+        let previous_a = runtime_collider(
+            collider_a,
+            state_a.previous_pose,
+            state_a.velocity.linear,
+        );
+        let previous_b = runtime_collider(
+            collider_b,
+            state_b.previous_pose,
+            state_b.velocity.linear,
+        );
+        Ok(crate::capsule_manifold(&previous_a, &previous_b, Some(cached_normal))?.is_none())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_contact_velocity_impulse(
+        &mut self,
+        body_a: BodyId,
+        body_b: BodyId,
+        surface_offset_a: Vec3,
+        surface_offset_b: Vec3,
+        direction: Vec3,
+        impulse: f32,
+    ) -> Result<(), SolverError> {
+        validate_vec3("contact_impulse_direction", direction)?;
+        validate_finite("contact_velocity_impulse", impulse)?;
+        self.apply_velocity_impulse(
+            body_a,
+            -direction,
+            -surface_offset_a.cross(direction),
+            impulse,
+        )?;
+        self.apply_velocity_impulse(
+            body_b,
+            direction,
+            surface_offset_b.cross(direction),
+            impulse,
         )
     }
 
