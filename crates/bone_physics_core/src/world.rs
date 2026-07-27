@@ -696,10 +696,8 @@ impl SolverWorld {
         let radius_sum = radius_a + radius_b;
         validate_nonnegative("contact_radius_sum", radius_sum)?;
 
-        let (center_a, center_offset_a) =
-            self.anchor_geometry(collider_a.body, contact.local_a)?;
-        let (center_b, center_offset_b) =
-            self.anchor_geometry(collider_b.body, contact.local_b)?;
+        let (center_a, center_offset_a) = self.anchor_geometry(collider_a.body, contact.local_a)?;
+        let (center_b, center_offset_b) = self.anchor_geometry(collider_b.body, contact.local_b)?;
         let centerline_separation = center_a.distance(center_b);
         validate_nonnegative("contact_centerline_separation", centerline_separation)?;
         if centerline_separation > radius_sum + CONTACT_SEPARATION_TOLERANCE {
@@ -760,10 +758,7 @@ impl SolverWorld {
             return Ok(());
         }
         let maximum_friction_impulse = combined_friction * normal_impulse;
-        validate_nonnegative(
-            "contact_maximum_friction_impulse",
-            maximum_friction_impulse,
-        )?;
+        validate_nonnegative("contact_maximum_friction_impulse", maximum_friction_impulse)?;
         self.apply_contact_velocity_impulse(
             collider_a.body,
             collider_b.body,
@@ -857,16 +852,10 @@ impl SolverWorld {
         let state_b = self
             .body(collider_b.body)
             .ok_or(SolverError::MissingBody(collider_b.body.get()))?;
-        let previous_a = runtime_collider(
-            collider_a,
-            state_a.previous_pose,
-            state_a.velocity.linear,
-        );
-        let previous_b = runtime_collider(
-            collider_b,
-            state_b.previous_pose,
-            state_b.velocity.linear,
-        );
+        let previous_a =
+            runtime_collider(collider_a, state_a.previous_pose, state_a.velocity.linear);
+        let previous_b =
+            runtime_collider(collider_b, state_b.previous_pose, state_b.velocity.linear);
         Ok(crate::capsule_manifold(&previous_a, &previous_b, Some(cached_normal))?.is_none())
     }
 
