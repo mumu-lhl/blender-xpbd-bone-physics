@@ -482,9 +482,13 @@ impl SolverWorld {
             else {
                 continue;
             };
+            let radius_a = collider_a.shape.effective_radius()?;
+            let radius_b = collider_b.shape.effective_radius()?;
 
             for geometry in manifold.points {
-                let feature = capsule_contact_feature(collider_a, geometry.point_a);
+                let center_a = geometry.point_a - geometry.normal * radius_a;
+                let center_b = geometry.point_b + geometry.normal * radius_b;
+                let feature = capsule_contact_feature(collider_a, center_a);
                 let key = ContactKey::new(pair, feature, feature);
                 let previous = self
                     .cached_contacts
@@ -502,8 +506,8 @@ impl SolverWorld {
                     (ContactLambdas::default(), 1)
                 };
                 let contact = CachedContact {
-                    local_a: local_point(collider_a.pose, geometry.point_a),
-                    local_b: local_point(collider_b.pose, geometry.point_b),
+                    local_a: local_point(collider_a.pose, center_a),
+                    local_b: local_point(collider_b.pose, center_b),
                     normal: geometry.normal,
                     tangents: tangent_basis(geometry.normal),
                     lambdas,
@@ -577,7 +581,10 @@ impl SolverWorld {
             return Ok(());
         }
 
-        let constraint_value = (point_b - point_a).dot(contact.normal);
+        let radius_sum =
+            collider_a.shape.effective_radius()? + collider_b.shape.effective_radius()?;
+        validate_nonnegative("contact_radius_sum", radius_sum)?;
+        let constraint_value = (point_b - point_a).dot(contact.normal) - radius_sum;
         validate_finite("contact_constraint_value", constraint_value)?;
         let unconstrained_delta = -constraint_value / inverse_mass;
         validate_finite("contact_delta_lambda", unconstrained_delta)?;
@@ -657,11 +664,9 @@ impl SolverWorld {
             if let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
             {
                 for point in manifold.points {
-                    if point.penetration > 0.0 {
-                        active = active.checked_add(1).ok_or_else(|| {
-                            SolverError::invalid_value("contact_count", active as f64)
-                        })?;
-                    }
+                    active = active.checked_add(1).ok_or_else(|| {
+                        SolverError::invalid_value("contact_count", active as f64)
+                    })?;
                     deepest = deepest.max(point.penetration);
                 }
             }
