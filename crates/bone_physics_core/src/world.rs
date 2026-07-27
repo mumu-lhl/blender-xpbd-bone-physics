@@ -844,16 +844,25 @@ fn assign_contact_slots(
     context: ContactMatchContext,
 ) -> Result<Vec<(ContactKey, CachedContact)>, SolverError> {
     if current.len() > 2 {
-        return Err(SolverError::invalid_value("contact_manifold_points", current.len() as f64));
+        return Err(SolverError::invalid_value(
+            "contact_manifold_points",
+            current.len() as f64,
+        ));
     }
     if previous.len() > 2 {
-        return Err(SolverError::invalid_value("cached_contact_count", previous.len() as f64));
+        return Err(SolverError::invalid_value(
+            "cached_contact_count",
+            previous.len() as f64,
+        ));
     }
 
     let mut reserved_keys = Vec::with_capacity(previous.len() + current.len());
     for (key, contact) in previous {
         if key.pair != pair || reserved_keys.contains(key) {
-            return Err(SolverError::invalid_value("cached_contact_feature", key.feature_a));
+            return Err(SolverError::invalid_value(
+                "cached_contact_feature",
+                key.feature_a,
+            ));
         }
         contact.validate()?;
         reserved_keys.push(*key);
@@ -870,7 +879,10 @@ fn assign_contact_slots(
         };
         let (key, cached) = previous[previous_index];
         if used_keys.contains(&key) {
-            return Err(SolverError::invalid_value("cached_contact_feature", key.feature_a));
+            return Err(SolverError::invalid_value(
+                "cached_contact_feature",
+                key.feature_a,
+            ));
         }
         current[current_index].lambdas = cached.lambdas;
         current[current_index].age = cached
@@ -1024,7 +1036,10 @@ fn contact_match_score(
 
     let radius_sum = f64::from(context.radius_sum);
     if !radius_sum.is_finite() || radius_sum <= 0.0 {
-        return Err(SolverError::invalid_value("contact_match_radius_sum", radius_sum));
+        return Err(SolverError::invalid_value(
+            "contact_match_radius_sum",
+            radius_sum,
+        ));
     }
     // The local metric sums two squared anchor displacements. Weighting the
     // world midpoint by two gives it the same scale when both anchors

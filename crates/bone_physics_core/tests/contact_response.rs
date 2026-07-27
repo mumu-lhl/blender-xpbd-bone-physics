@@ -454,8 +454,11 @@ fn near_parallel_boundary_world(
     let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
     let angle = (0.02_f32 / 1.5).asin();
     let mut rotating = body(2, Vec3::new(7.5, 0.199, 0.0), Vec3::ZERO, false);
-    rotating.pose =
-        Pose::try_new(rotating.pose.translation, Quat::from_rotation_z(2.0 * angle)).unwrap();
+    rotating.pose = Pose::try_new(
+        rotating.pose.translation,
+        Quat::from_rotation_z(2.0 * angle),
+    )
+    .unwrap();
     rotating.velocity.angular = -Vec3::Z * (angle / DT);
 
     let (a0, a1) = if reverse_endpoints {
@@ -476,7 +479,10 @@ fn near_parallel_boundary_world(
         colliders.reverse();
     }
 
-    let mut result = world(Vec3::ZERO, vec![body(1, Vec3::ZERO, Vec3::ZERO, false), rotating]);
+    let mut result = world(
+        Vec3::ZERO,
+        vec![body(1, Vec3::ZERO, Vec3::ZERO, false), rotating],
+    );
     result.set_colliders(colliders).unwrap();
     result
 }
