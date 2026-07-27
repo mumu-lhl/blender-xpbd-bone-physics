@@ -28,12 +28,7 @@ fn capsule_sphere(id: u32, center: Vec3, radius: f32) -> CapsuleCollider {
     capsule(id, Vec3::ZERO, Vec3::ZERO, radius, center, Vec3::ZERO)
 }
 
-fn proxy(
-    id: u32,
-    pose: Pose,
-    linear_velocity: Vec3,
-    shape: AnalyticShape,
-) -> AnalyticProxy {
+fn proxy(id: u32, pose: Pose, linear_velocity: Vec3, shape: AnalyticShape) -> AnalyticProxy {
     AnalyticProxy {
         id: ColliderId::new(id),
         pose,
@@ -173,22 +168,8 @@ fn penetrating_sphere_has_negative_canonical_separation() {
 
 #[test]
 fn analytic_capsule_endpoint_permutations_are_bit_deterministic() {
-    let forward_capsule = capsule(
-        10,
-        -Vec3::X,
-        Vec3::X,
-        0.25,
-        Vec3::ZERO,
-        Vec3::ZERO,
-    );
-    let reversed_capsule = capsule(
-        10,
-        Vec3::X,
-        -Vec3::X,
-        0.25,
-        Vec3::ZERO,
-        Vec3::ZERO,
-    );
+    let forward_capsule = capsule(10, -Vec3::X, Vec3::X, 0.25, Vec3::ZERO, Vec3::ZERO);
+    let reversed_capsule = capsule(10, Vec3::X, -Vec3::X, 0.25, Vec3::ZERO, Vec3::ZERO);
     let forward_proxy = proxy(
         11,
         Pose::try_new(Vec3::new(0.0, 0.4, 0.0), Quat::IDENTITY).unwrap(),
@@ -352,6 +333,133 @@ fn rotated_rounded_box_corner_has_hand_computable_contact() {
 }
 
 #[test]
+fn rounded_box_containing_capsule_uses_minimum_translation_axis() {
+    let capsule = capsule(2, -0.9 * Vec3::X, 0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let proxy = proxy(
+        8,
+        Pose::IDENTITY,
+        Vec3::ZERO,
+        AnalyticShape::RoundedBox {
+            half_extents: Vec3::ONE,
+            radius: 0.1,
+        },
+    );
+
+    let contact = capsule_analytic_contact(&capsule, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+
+    assert_contact_witness(
+        &contact,
+        Vec3::new(-0.9, 0.1, 0.0),
+        Vec3::new(-0.9, -1.1, 0.0),
+        Vec3::Y,
+        -1.2,
+        false,
+    );
+}
+
+#[test]
+fn contained_capsule_endpoint_permutation_is_bit_deterministic() {
+    let forward = capsule(2, -0.9 * Vec3::X, 0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let reversed = capsule(2, 0.9 * Vec3::X, -0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let proxy = proxy(
+        8,
+        Pose::IDENTITY,
+        Vec3::ZERO,
+        AnalyticShape::RoundedBox {
+            half_extents: Vec3::ONE,
+            radius: 0.1,
+        },
+    );
+
+    let forward_contact = capsule_analytic_contact(&forward, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+    let reversed_contact = capsule_analytic_contact(&reversed, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+
+    assert_contact_witness(
+        &reversed_contact,
+        Vec3::new(-0.9, 0.1, 0.0),
+        Vec3::new(-0.9, -1.1, 0.0),
+        Vec3::Y,
+        -1.2,
+        false,
+    );
+    assert_eq!(contact_bits(&forward_contact), contact_bits(&reversed_contact));
+}
+
+#[test]
+fn asymmetric_contained_capsule_selects_the_shorter_exit() {
+    let forward = capsule(2, -0.2 * Vec3::X, 0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let reversed = capsule(2, 0.9 * Vec3::X, -0.2 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let proxy = proxy(
+        8,
+        Pose::IDENTITY,
+        Vec3::ZERO,
+        AnalyticShape::RoundedBox {
+            half_extents: Vec3::new(1.0, 3.0, 3.0),
+            radius: 0.1,
+        },
+    );
+
+    let forward_contact = capsule_analytic_contact(&forward, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+    let reversed_contact = capsule_analytic_contact(&reversed, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+
+    assert_contact_witness(
+        &forward_contact,
+        -0.3 * Vec3::X,
+        1.1 * Vec3::X,
+        -Vec3::X,
+        -1.4,
+        false,
+    );
+    assert_eq!(contact_bits(&forward_contact), contact_bits(&reversed_contact));
+}
+
+#[test]
+fn body_diagonal_capsule_uses_cross_axis_minimum_translation() {
+    let forward = capsule(1, -0.9 * Vec3::ONE, 0.9 * Vec3::ONE, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let reversed = capsule(1, 0.9 * Vec3::ONE, -0.9 * Vec3::ONE, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let proxy = proxy(
+        4,
+        Pose::IDENTITY,
+        Vec3::ZERO,
+        AnalyticShape::RoundedBox {
+            half_extents: Vec3::ONE,
+            radius: 0.1,
+        },
+    );
+    let motion = Vec3::new(0.0, 1.0, -1.0).normalize();
+    let normal = -motion;
+    let center_capsule = -0.9 * Vec3::ONE;
+    let center_proxy = Vec3::new(-0.9, 1.0, -1.0);
+
+    let forward_contact = capsule_analytic_contact(&forward, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+    let reversed_contact = capsule_analytic_contact(&reversed, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+
+    assert_contact_witness(
+        &forward_contact,
+        center_capsule + normal * 0.1,
+        center_proxy - normal * 0.1,
+        normal,
+        -(2.0_f32.sqrt() + 0.2),
+        false,
+    );
+    assert_eq!(contact_bits(&forward_contact), contact_bits(&reversed_contact));
+}
+
+#[test]
 fn baked_nonuniform_dimensions_are_explicit_geometry() {
     let capsule = capsule_sphere(40, Vec3::ZERO, 0.25);
     let elongated_capsule = proxy(
@@ -421,14 +529,7 @@ fn reachable_positive_gap_returns_a_speculative_contact() {
 
 #[test]
 fn moving_capsule_reaches_a_stationary_proxy_by_relative_velocity() {
-    let capsule = capsule(
-        52,
-        Vec3::ZERO,
-        Vec3::ZERO,
-        0.25,
-        Vec3::ZERO,
-        4.0 * Vec3::X,
-    );
+    let capsule = capsule(52, Vec3::ZERO, Vec3::ZERO, 0.25, Vec3::ZERO, 4.0 * Vec3::X);
     let proxy = sphere_proxy(53, Vec3::X, 0.25);
 
     let contact = capsule_analytic_contact(&capsule, &proxy, 0.125)
@@ -447,14 +548,7 @@ fn moving_capsule_reaches_a_stationary_proxy_by_relative_velocity() {
 
 #[test]
 fn co_moving_separated_geometry_has_no_speculative_contact() {
-    let capsule = capsule(
-        52,
-        Vec3::ZERO,
-        Vec3::ZERO,
-        0.25,
-        Vec3::ZERO,
-        4.0 * Vec3::X,
-    );
+    let capsule = capsule(52, Vec3::ZERO, Vec3::ZERO, 0.25, Vec3::ZERO, 4.0 * Vec3::X);
     let mut proxy = sphere_proxy(53, Vec3::X, 0.25);
     proxy.linear_velocity = 4.0 * Vec3::X;
 
@@ -606,13 +700,7 @@ fn analytic_dimensions_reject_negative_and_non_finite_values() {
 
     for (shape, expected_field, expected_value) in cases {
         let proxy = proxy(71, Pose::IDENTITY, Vec3::ZERO, shape);
-        assert_invalid_value(
-            &capsule,
-            &proxy,
-            0.125,
-            expected_field,
-            expected_value,
-        );
+        assert_invalid_value(&capsule, &proxy, 0.125, expected_field, expected_value);
     }
 }
 
@@ -628,13 +716,7 @@ fn non_finite_proxy_pose_and_velocity_are_rejected_precisely() {
         Vec3::ZERO,
         AnalyticShape::Sphere { radius: 0.25 },
     );
-    assert_invalid_value(
-        &capsule,
-        &invalid_pose,
-        0.125,
-        "translation",
-        f64::INFINITY,
-    );
+    assert_invalid_value(&capsule, &invalid_pose, 0.125, "translation", f64::INFINITY);
 
     let invalid_rotation = proxy(
         81,
@@ -671,13 +753,7 @@ fn malformed_capsule_collider_is_rejected_at_the_query_boundary() {
         translation: Vec3::new(0.0, f32::INFINITY, 0.0),
         rotation: Quat::IDENTITY,
     };
-    assert_invalid_value(
-        &invalid_pose,
-        &proxy,
-        0.125,
-        "translation",
-        f64::INFINITY,
-    );
+    assert_invalid_value(&invalid_pose, &proxy, 0.125, "translation", f64::INFINITY);
 
     let mut invalid_rotation = capsule_sphere(82, Vec3::ZERO, 0.25);
     invalid_rotation.pose = Pose {

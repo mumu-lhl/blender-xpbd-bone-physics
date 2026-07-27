@@ -19,9 +19,10 @@ pub use chain::{
     build_cross_links, sample_chain_s,
 };
 pub use collision::{
-    BroadPhaseBackend, CachedContact, Capsule, CapsuleCollider, CapsuleColliderDesc,
-    CapsuleManifold, CollisionFilter, CollisionPipeline, ContactGeometry, ContactKey,
-    ContactLambdas, ContactMaterial, PairKey, capsule_manifold,
+    AnalyticContact, AnalyticProxy, AnalyticShape, BroadPhaseBackend, CachedContact, Capsule,
+    CapsuleCollider, CapsuleColliderDesc, CapsuleManifold, CollisionFilter, CollisionPipeline,
+    ContactGeometry, ContactKey, ContactLambdas, ContactMaterial, PairKey,
+    capsule_analytic_contact, capsule_manifold,
 };
 pub use constraint::{
     AngularLimit, AnimationTarget, ConstraintKind, ContinuousAngles, EulerOrder,

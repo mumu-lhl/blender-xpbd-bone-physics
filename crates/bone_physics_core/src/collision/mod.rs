@@ -1,9 +1,13 @@
+mod analytic;
 mod broad_phase;
 mod capsule;
 mod contact;
 mod filter;
 mod shape;
 
+pub use analytic::{
+    AnalyticContact, AnalyticProxy, AnalyticShape, capsule_analytic_contact,
+};
 pub use broad_phase::{BroadPhaseBackend, CollisionPipeline};
 pub use capsule::{CapsuleManifold, ContactGeometry, PairKey, capsule_manifold};
 pub use contact::{
