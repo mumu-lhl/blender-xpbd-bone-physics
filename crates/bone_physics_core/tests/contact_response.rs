@@ -398,6 +398,56 @@ fn parallel_manifold_feature_slots_survive_one_two_one_transition() {
 }
 
 #[test]
+fn unequal_parallel_capsules_keep_two_same_half_feature_slots_distinct() {
+    let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
+    // Canonical collider A spans [0, 10]. Canonical collider B advances from
+    // [-1, 0] to [0, 1], so the manifold transitions from one point to two
+    // points while both two-point anchors remain in A's first half. The
+    // centerline spacing equals the 0.2 m radius sum, isolating cache identity
+    // from normal response.
+    let bodies = vec![
+        body(1, Vec3::ZERO, Vec3::ZERO, false),
+        body(2, Vec3::new(-2.0, 0.2, 0.0), Vec3::X * 120.0, false),
+    ];
+    let colliders = vec![
+        capsule_with_radius(10, 1, Vec3::ZERO, Vec3::X * 10.0, 0.1, material),
+        capsule_with_radius(20, 2, Vec3::ZERO, Vec3::X, 0.1, material),
+    ];
+    let mut forward = world(Vec3::ZERO, bodies.clone());
+    let mut reversed = world(Vec3::ZERO, bodies);
+    forward.set_colliders(colliders.clone()).unwrap();
+    reversed
+        .set_colliders(colliders.iter().cloned().rev().collect())
+        .unwrap();
+
+    let first_forward = forward.substep(DT, 1.0, options()).unwrap();
+    let first_reversed = reversed.substep(DT, 1.0, options()).unwrap();
+    assert!(first_forward.deepest_penetration <= 1.0e-6);
+    assert!(first_reversed.deepest_penetration <= 1.0e-6);
+    let first = forward.cached_contacts();
+    assert_eq!(first, reversed.cached_contacts());
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].1.age, 1);
+    assert_eq!(first[0].1.lambdas, Default::default());
+
+    let second_forward = forward.substep(DT, 1.0, options()).unwrap();
+    let second_reversed = reversed.substep(DT, 1.0, options()).unwrap();
+    assert!(second_forward.deepest_penetration <= 1.0e-6);
+    assert!(second_reversed.deepest_penetration <= 1.0e-6);
+    let second = forward.cached_contacts();
+    assert_eq!(second, reversed.cached_contacts());
+    assert_eq!(second.len(), 2);
+    assert!(second[0].0 < second[1].0);
+    assert!(second[0].1.local_a.x < 5.0);
+    assert!(second[1].1.local_a.x < 5.0);
+    assert_eq!(second[0].0, first[0].0);
+    assert_eq!(second[0].1.age, first[0].1.age + 1);
+    assert_eq!(second[0].1.lambdas, first[0].1.lambdas);
+    assert_eq!(second[1].1.age, 1);
+    assert_eq!(second[1].1.lambdas, Default::default());
+}
+
+#[test]
 fn final_diagnostics_drop_a_generated_contact_separated_by_a_constraint() {
     let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
     let mut world = world(
