@@ -554,6 +554,134 @@ fn near_parallel_contact_slots_ignore_local_endpoint_order() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum FarContactTransition {
+    OneToOne,
+    OneToTwo,
+    TwoToOne,
+    TwoToTwo,
+}
+
+impl FarContactTransition {
+    fn geometry(self) -> (usize, usize, f32, f32, f32) {
+        match self {
+            Self::OneToOne => (1, 1, 10.0, -12.0, 11.0),
+            Self::OneToTwo => (1, 2, 100.0, -51.0, 50.0),
+            Self::TwoToOne => (2, 1, 100.0, -100.0, 100.0),
+            Self::TwoToTwo => (2, 2, 100.0, -50.0, 50.0),
+        }
+    }
+}
+
+fn far_contact_transition_world(
+    transition: FarContactTransition,
+    reverse_endpoints: bool,
+    reverse_registration: bool,
+) -> SolverWorld {
+    let (_, _, length_a, initial_b, step_b) = transition.geometry();
+    let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
+    let (a0, a1) = if reverse_endpoints {
+        (Vec3::X * length_a, Vec3::ZERO)
+    } else {
+        (Vec3::ZERO, Vec3::X * length_a)
+    };
+    let (b0, b1) = if reverse_endpoints {
+        (Vec3::X, Vec3::ZERO)
+    } else {
+        (Vec3::ZERO, Vec3::X)
+    };
+    let mut colliders = vec![
+        capsule_with_radius(10, 1, a0, a1, 0.1, material),
+        capsule_with_radius(20, 2, b0, b1, 0.1, material),
+    ];
+    if reverse_registration {
+        colliders.reverse();
+    }
+
+    let mut result = world(
+        Vec3::ZERO,
+        vec![
+            body(1, Vec3::ZERO, Vec3::ZERO, false),
+            body(
+                2,
+                Vec3::new(initial_b, 0.2, 0.0),
+                Vec3::X * (step_b / DT),
+                false,
+            ),
+        ],
+    );
+    result.set_colliders(colliders).unwrap();
+    result
+}
+
+fn assert_far_contact_transition_resets_cache(transition: FarContactTransition) {
+    let (first_count, second_count, _, _, _) = transition.geometry();
+    let mut worlds = [
+        far_contact_transition_world(transition, false, false),
+        far_contact_transition_world(transition, false, true),
+        far_contact_transition_world(transition, true, false),
+        far_contact_transition_world(transition, true, true),
+    ];
+
+    for world in &mut worlds {
+        let diagnostics = world.substep(DT, 1.0, options()).unwrap();
+        assert!(diagnostics.deepest_penetration <= 1.0e-6);
+    }
+    let first = worlds[0].cached_contacts();
+    assert_eq!(first.len(), first_count);
+    assert!(first.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    assert!(
+        first
+            .iter()
+            .all(|(_, contact)| contact.age == 1 && contact.lambdas == Default::default())
+    );
+    for world in &worlds[1..] {
+        assert_eq!(world.cached_contacts(), first);
+    }
+
+    for world in &mut worlds {
+        let diagnostics = world.substep(DT, 1.0, options()).unwrap();
+        assert!(diagnostics.deepest_penetration <= 1.0e-6);
+    }
+    let second = worlds[0].cached_contacts();
+    assert_eq!(second.len(), second_count);
+    assert!(second.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    assert!(
+        second
+            .iter()
+            .all(|(_, contact)| contact.age == 1 && contact.lambdas == Default::default())
+    );
+    assert!(second.iter().all(|(_, current)| {
+        first
+            .iter()
+            .all(|(_, previous)| current.local_a.distance(previous.local_a) > 5.0)
+    }));
+    assert!(
+        second
+            .iter()
+            .all(|(key, _)| first.iter().all(|(previous_key, _)| key != previous_key))
+    );
+    for world in &worlds[1..] {
+        assert_eq!(world.cached_contacts(), second);
+    }
+}
+
+#[test]
+fn direct_far_endpoint_jump_starts_a_new_contact_feature() {
+    assert_far_contact_transition_resets_cache(FarContactTransition::OneToOne);
+}
+
+#[test]
+fn far_disjoint_cardinality_transitions_do_not_warm_start_unrelated_anchors() {
+    for transition in [
+        FarContactTransition::OneToTwo,
+        FarContactTransition::TwoToOne,
+        FarContactTransition::TwoToTwo,
+    ] {
+        assert_far_contact_transition_resets_cache(transition);
+    }
+}
+
 #[test]
 fn final_diagnostics_drop_a_generated_contact_separated_by_a_constraint() {
     let material = ContactMaterial::try_new(0.0, 0.0).unwrap();

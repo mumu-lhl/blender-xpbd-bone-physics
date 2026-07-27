@@ -484,44 +484,29 @@ impl SolverWorld {
             };
             let radius_a = collider_a.shape.effective_radius()?;
             let radius_b = collider_b.shape.effective_radius()?;
+            let mut current_contacts = Vec::with_capacity(manifold.points.len());
 
-            let manifold_point_count = manifold.points.len();
-            for (manifold_point_index, geometry) in manifold.points.into_iter().enumerate() {
+            for geometry in manifold.points {
                 let center_a = geometry.point_a - geometry.normal * radius_a;
                 let center_b = geometry.point_b + geometry.normal * radius_b;
-                let feature = capsule_contact_feature(
-                    collider_a,
-                    center_a,
-                    manifold_point_index,
-                    manifold_point_count,
-                )?;
-                let key = ContactKey::new(pair, feature, feature);
-                let previous = self
-                    .cached_contacts
-                    .binary_search_by_key(&key, |(cached_key, _)| *cached_key)
-                    .ok()
-                    .map(|index| self.cached_contacts[index].1);
-                let (lambdas, age) = if let Some(previous) = previous {
-                    (
-                        previous.lambdas,
-                        previous.age.checked_add(1).ok_or_else(|| {
-                            SolverError::invalid_value("contact_age", previous.age)
-                        })?,
-                    )
-                } else {
-                    (ContactLambdas::default(), 1)
-                };
                 let contact = CachedContact {
                     local_a: local_point(collider_a.pose, center_a),
                     local_b: local_point(collider_b.pose, center_b),
                     normal: geometry.normal,
                     tangents: tangent_basis(geometry.normal),
-                    lambdas,
-                    age,
+                    lambdas: ContactLambdas::default(),
+                    age: 1,
                 };
                 contact.validate()?;
-                generated.push((key, contact));
+                current_contacts.push(contact);
             }
+            let previous_contacts: Vec<_> = self
+                .cached_contacts
+                .iter()
+                .filter(|(key, _)| key.pair == pair)
+                .copied()
+                .collect();
+            generated.extend(assign_contact_slots(pair, current_contacts, &previous_contacts)?);
         }
 
         generated.sort_by_key(|(key, _)| *key);
@@ -823,26 +808,136 @@ fn local_point(pose: Pose, point: Vec3) -> Vec3 {
     pose.rotation.conjugate() * (point - pose.translation)
 }
 
-fn capsule_contact_feature(
-    collider: &CapsuleCollider,
-    surface_point: Vec3,
-    manifold_point_index: usize,
-    manifold_point_count: usize,
-) -> Result<u32, SolverError> {
-    if manifold_point_count > 1 {
-        return u32::try_from(manifold_point_index).map_err(|_| {
-            SolverError::invalid_value("contact_feature_index", manifold_point_index as f64)
-        });
+fn assign_contact_slots(
+    pair: PairKey,
+    mut current: Vec<CachedContact>,
+    previous: &[(ContactKey, CachedContact)],
+) -> Result<Vec<(ContactKey, CachedContact)>, SolverError> {
+    if current.len() > 2 {
+        return Err(SolverError::invalid_value("contact_manifold_points", current.len() as f64));
+    }
+    if previous.len() > 2 {
+        return Err(SolverError::invalid_value("cached_contact_count", previous.len() as f64));
     }
 
-    let local_surface = local_point(collider.pose, surface_point);
-    let axis = collider.shape.local_b - collider.shape.local_a;
-    let axis_length_squared = axis.length_squared();
-    if axis_length_squared <= MIN_CONTACT_DENOMINATOR {
-        return Ok(0);
+    current.sort_by(contact_anchor_order);
+    let matches = match_contact_anchors(&current, previous)?;
+    let mut keys: Vec<Option<ContactKey>> = vec![None; current.len()];
+    let mut used_keys = Vec::with_capacity(current.len());
+
+    for (current_index, previous_index) in matches.into_iter().enumerate() {
+        let Some(previous_index) = previous_index else {
+            continue;
+        };
+        let (key, cached) = previous[previous_index];
+        if used_keys.contains(&key) {
+            return Err(SolverError::invalid_value("cached_contact_feature", key.feature_a));
+        }
+        current[current_index].lambdas = cached.lambdas;
+        current[current_index].age = cached
+            .age
+            .checked_add(1)
+            .ok_or_else(|| SolverError::invalid_value("contact_age", cached.age))?;
+        current[current_index].validate()?;
+        keys[current_index] = Some(key);
+        used_keys.push(key);
     }
-    let projection = (local_surface - collider.shape.local_a).dot(axis) / axis_length_squared;
-    Ok(u32::from(projection > 0.5))
+
+    for key in &mut keys {
+        if key.is_some() {
+            continue;
+        }
+        let mut slot = 0_u32;
+        let assigned = loop {
+            let candidate = ContactKey::new(pair, slot, slot);
+            if !used_keys.contains(&candidate) {
+                break candidate;
+            }
+            slot = slot
+                .checked_add(1)
+                .ok_or_else(|| SolverError::invalid_value("contact_feature_slot", slot))?;
+        };
+        *key = Some(assigned);
+        used_keys.push(assigned);
+    }
+
+    let mut assigned = Vec::with_capacity(current.len());
+    for (contact, key) in current.into_iter().zip(keys) {
+        let key = key.ok_or_else(|| SolverError::invalid_value("contact_feature_slot", -1.0))?;
+        assigned.push((key, contact));
+    }
+    Ok(assigned)
+}
+
+fn match_contact_anchors(
+    current: &[CachedContact],
+    previous: &[(ContactKey, CachedContact)],
+) -> Result<Vec<Option<usize>>, SolverError> {
+    let mut matches = vec![None; current.len()];
+    match (current.len(), previous.len()) {
+        (0, _) | (_, 0) => {}
+        (1, 1) => matches[0] = Some(0),
+        (1, 2) => {
+            let first = contact_anchor_distance(&current[0], &previous[0].1)?;
+            let second = contact_anchor_distance(&current[0], &previous[1].1)?;
+            matches[0] = Some(if second < first { 1 } else { 0 });
+        }
+        (2, 1) => {
+            let first = contact_anchor_distance(&current[0], &previous[0].1)?;
+            let second = contact_anchor_distance(&current[1], &previous[0].1)?;
+            let current_index = if second < first { 1 } else { 0 };
+            matches[current_index] = Some(0);
+        }
+        (2, 2) => {
+            let direct = contact_anchor_distance(&current[0], &previous[0].1)?
+                + contact_anchor_distance(&current[1], &previous[1].1)?;
+            let crossed = contact_anchor_distance(&current[0], &previous[1].1)?
+                + contact_anchor_distance(&current[1], &previous[0].1)?;
+            if direct <= crossed {
+                matches[0] = Some(0);
+                matches[1] = Some(1);
+            } else {
+                matches[0] = Some(1);
+                matches[1] = Some(0);
+            }
+        }
+        _ => {
+            return Err(SolverError::invalid_value(
+                "contact_match_count",
+                current.len().max(previous.len()) as f64,
+            ));
+        }
+    }
+    Ok(matches)
+}
+
+fn contact_anchor_distance(
+    current: &CachedContact,
+    previous: &CachedContact,
+) -> Result<f64, SolverError> {
+    let distance = vec3_distance_squared(current.local_a, previous.local_a)
+        + vec3_distance_squared(current.local_b, previous.local_b);
+    if !distance.is_finite() {
+        return Err(SolverError::invalid_value("contact_anchor_distance", distance));
+    }
+    Ok(distance)
+}
+
+fn vec3_distance_squared(a: Vec3, b: Vec3) -> f64 {
+    let x = f64::from(a.x) - f64::from(b.x);
+    let y = f64::from(a.y) - f64::from(b.y);
+    let z = f64::from(a.z) - f64::from(b.z);
+    x * x + y * y + z * z
+}
+
+fn contact_anchor_order(a: &CachedContact, b: &CachedContact) -> core::cmp::Ordering {
+    vec3_order(a.local_a, b.local_a).then_with(|| vec3_order(a.local_b, b.local_b))
+}
+
+fn vec3_order(a: Vec3, b: Vec3) -> core::cmp::Ordering {
+    a.x.total_cmp(&b.x)
+        .then_with(|| a.y.total_cmp(&b.y))
+        .then_with(|| a.z.total_cmp(&b.z))
 }
 
 fn tangent_basis(normal: Vec3) -> [Vec3; 2] {
