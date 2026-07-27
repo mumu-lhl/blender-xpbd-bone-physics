@@ -30,9 +30,7 @@ pub enum AnalyticShape {
 impl AnalyticShape {
     fn validate(self) -> Result<(), SolverError> {
         match self {
-            Self::Sphere { radius } => {
-                validate_nonnegative("analytic_sphere_radius", radius)
-            }
+            Self::Sphere { radius } => validate_nonnegative("analytic_sphere_radius", radius),
             Self::Capsule {
                 local_a,
                 local_b,
@@ -210,8 +208,7 @@ fn rounded_box_contact(
     validate_vec3("analytic_rounded_box_local_capsule_a", local_a)?;
     validate_vec3("analytic_rounded_box_local_capsule_b", local_b)?;
     let (local_a, local_b) = ordered_segment((local_a, local_b));
-    let (local_capsule, local_box) =
-        closest_segment_aabb(local_a, local_b, half_extents);
+    let (local_capsule, local_box) = closest_segment_aabb(local_a, local_b, half_extents);
     let local_delta = local_box - local_capsule;
     let distance_squared = local_delta.length_squared();
     validate_nonnegative("analytic_center_distance_squared", distance_squared)?;
@@ -257,13 +254,7 @@ fn rounded_box_contact(
     let point_capsule = center_capsule + normal * capsule_radius;
     let point_proxy = core_surface - normal * box_radius;
     let separation = (point_proxy - point_capsule).dot(normal);
-    validated_contact(
-        point_capsule,
-        point_proxy,
-        normal,
-        separation,
-        false,
-    )
+    validated_contact(point_capsule, point_proxy, normal, separation, false)
 }
 
 fn make_contact(
@@ -278,13 +269,7 @@ fn make_contact(
     let point_capsule = center_capsule + normal * capsule_radius;
     let point_proxy = center_proxy - normal * proxy_radius;
     let separation = (center_proxy - center_capsule).dot(normal) - radius_sum;
-    validated_contact(
-        point_capsule,
-        point_proxy,
-        normal,
-        separation,
-        speculative,
-    )
+    validated_contact(point_capsule, point_proxy, normal, separation, speculative)
 }
 
 fn validated_contact(
@@ -538,10 +523,7 @@ fn segment_aabb_minimum_translation(
     Ok((capsule_support, box_support, normal))
 }
 
-fn update_segment_aabb_best(
-    best: &mut (f32, Vec3, Vec3),
-    candidate: (f32, Vec3, Vec3),
-) {
+fn update_segment_aabb_best(best: &mut (f32, Vec3, Vec3), candidate: (f32, Vec3, Vec3)) {
     if candidate.0 < best.0 {
         *best = candidate;
     }

@@ -334,7 +334,14 @@ fn rotated_rounded_box_corner_has_hand_computable_contact() {
 
 #[test]
 fn rounded_box_containing_capsule_uses_minimum_translation_axis() {
-    let capsule = capsule(2, -0.9 * Vec3::X, 0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let capsule = capsule(
+        2,
+        -0.9 * Vec3::X,
+        0.9 * Vec3::X,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
     let proxy = proxy(
         8,
         Pose::IDENTITY,
@@ -361,8 +368,22 @@ fn rounded_box_containing_capsule_uses_minimum_translation_axis() {
 
 #[test]
 fn contained_capsule_endpoint_permutation_is_bit_deterministic() {
-    let forward = capsule(2, -0.9 * Vec3::X, 0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
-    let reversed = capsule(2, 0.9 * Vec3::X, -0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let forward = capsule(
+        2,
+        -0.9 * Vec3::X,
+        0.9 * Vec3::X,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
+    let reversed = capsule(
+        2,
+        0.9 * Vec3::X,
+        -0.9 * Vec3::X,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
     let proxy = proxy(
         8,
         Pose::IDENTITY,
@@ -388,13 +409,30 @@ fn contained_capsule_endpoint_permutation_is_bit_deterministic() {
         -1.2,
         false,
     );
-    assert_eq!(contact_bits(&forward_contact), contact_bits(&reversed_contact));
+    assert_eq!(
+        contact_bits(&forward_contact),
+        contact_bits(&reversed_contact)
+    );
 }
 
 #[test]
 fn asymmetric_contained_capsule_selects_the_shorter_exit() {
-    let forward = capsule(2, -0.2 * Vec3::X, 0.9 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
-    let reversed = capsule(2, 0.9 * Vec3::X, -0.2 * Vec3::X, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let forward = capsule(
+        2,
+        -0.2 * Vec3::X,
+        0.9 * Vec3::X,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
+    let reversed = capsule(
+        2,
+        0.9 * Vec3::X,
+        -0.2 * Vec3::X,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
     let proxy = proxy(
         8,
         Pose::IDENTITY,
@@ -420,13 +458,30 @@ fn asymmetric_contained_capsule_selects_the_shorter_exit() {
         -1.4,
         false,
     );
-    assert_eq!(contact_bits(&forward_contact), contact_bits(&reversed_contact));
+    assert_eq!(
+        contact_bits(&forward_contact),
+        contact_bits(&reversed_contact)
+    );
 }
 
 #[test]
 fn body_diagonal_capsule_uses_cross_axis_minimum_translation() {
-    let forward = capsule(1, -0.9 * Vec3::ONE, 0.9 * Vec3::ONE, 0.1, Vec3::ZERO, Vec3::ZERO);
-    let reversed = capsule(1, 0.9 * Vec3::ONE, -0.9 * Vec3::ONE, 0.1, Vec3::ZERO, Vec3::ZERO);
+    let forward = capsule(
+        1,
+        -0.9 * Vec3::ONE,
+        0.9 * Vec3::ONE,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
+    let reversed = capsule(
+        1,
+        0.9 * Vec3::ONE,
+        -0.9 * Vec3::ONE,
+        0.1,
+        Vec3::ZERO,
+        Vec3::ZERO,
+    );
     let proxy = proxy(
         4,
         Pose::IDENTITY,
@@ -456,7 +511,10 @@ fn body_diagonal_capsule_uses_cross_axis_minimum_translation() {
         -(2.0_f32.sqrt() + 0.2),
         false,
     );
-    assert_eq!(contact_bits(&forward_contact), contact_bits(&reversed_contact));
+    assert_eq!(
+        contact_bits(&forward_contact),
+        contact_bits(&reversed_contact)
+    );
 }
 
 #[test]
