@@ -317,7 +317,7 @@ fn contact_and_angular_limit_share_every_full_solver_iteration() {
     options.contact_iterations = 48;
     let diagnostics = world.substep(DT, 1.0, options).unwrap();
 
-    assert!(diagnostics.active_contacts > 0);
+    assert!(diagnostics.generated_contacts > 0);
     let anchor_error = world.anchor_error(anchor_id).unwrap();
     let limit_error = world.anchor_error(limit_id).unwrap();
     let rotation_z = world
