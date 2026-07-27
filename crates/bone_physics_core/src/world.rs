@@ -253,8 +253,7 @@ impl SolverWorld {
         solve_result?;
 
         let max_constraint_error = self.max_constraint_error()?;
-        let deepest_penetration = self.deepest_penetration()?;
-        let active_contacts = contact_count(self.cached_contacts.len())?;
+        let (active_contacts, deepest_penetration) = self.contact_residuals()?;
         self.rebuild_velocities(dt)?;
 
         let previous_target_alpha = self.target_alpha;
@@ -484,8 +483,8 @@ impl SolverWorld {
                 continue;
             };
 
-            for (feature, geometry) in manifold.points.into_iter().enumerate() {
-                let feature = feature as u32;
+            for geometry in manifold.points {
+                let feature = capsule_contact_feature(collider_a, geometry.point_a);
                 let key = ContactKey::new(pair, feature, feature);
                 let previous = self
                     .cached_contacts
@@ -645,10 +644,11 @@ impl SolverWorld {
         )
     }
 
-    fn deepest_penetration(&self) -> Result<f32, SolverError> {
+    fn contact_residuals(&self) -> Result<(u32, f32), SolverError> {
         let colliders = self.predicted_colliders()?;
         let pipeline = CollisionPipeline::try_new(&self.constraints)?;
         let candidates = pipeline.candidate_pairs(&colliders, &colliders)?;
+        let mut active = 0_usize;
         let mut deepest: f32 = 0.0;
         for pair in candidates {
             let collider_a = collider_by_id(&colliders, pair.first())?;
@@ -657,11 +657,16 @@ impl SolverWorld {
             if let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
             {
                 for point in manifold.points {
+                    if point.penetration > 0.0 {
+                        active = active.checked_add(1).ok_or_else(|| {
+                            SolverError::invalid_value("contact_count", active as f64)
+                        })?;
+                    }
                     deepest = deepest.max(point.penetration);
                 }
             }
         }
-        Ok(deepest)
+        Ok((contact_count(active)?, deepest))
     }
 
     fn collider_snapshots(
@@ -805,6 +810,17 @@ fn cached_normal_for_pair(contacts: &[(ContactKey, CachedContact)], pair: PairKe
 
 fn local_point(pose: Pose, point: Vec3) -> Vec3 {
     pose.rotation.conjugate() * (point - pose.translation)
+}
+
+fn capsule_contact_feature(collider: &CapsuleCollider, surface_point: Vec3) -> u32 {
+    let local_surface = local_point(collider.pose, surface_point);
+    let axis = collider.shape.local_b - collider.shape.local_a;
+    let axis_length_squared = axis.length_squared();
+    if axis_length_squared <= MIN_CONTACT_DENOMINATOR {
+        return 0;
+    }
+    let projection = (local_surface - collider.shape.local_a).dot(axis) / axis_length_squared;
+    u32::from(projection > 0.5)
 }
 
 fn tangent_basis(normal: Vec3) -> [Vec3; 2] {
