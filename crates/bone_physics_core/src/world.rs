@@ -12,6 +12,7 @@ use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
 
 const MIN_CONTACT_DENOMINATOR: f32 = 1.0e-12;
 const CONTACT_SEPARATION_TOLERANCE: f32 = 1.0e-6;
+pub const MAX_MULTIPLIER_MAGNITUDE: f32 = 1.0e20;
 // Warm starts may move by at most one effective pair radius, and normals must
 // stay within about 18 degrees. Dropping a marginal match is safer than
 // applying a cached impulse at an unrelated feature.
@@ -55,6 +56,14 @@ struct BodyEntry {
     state: BoneBodyState,
 }
 
+#[derive(Clone, Debug)]
+struct DynamicSnapshot {
+    bodies: Vec<BodyEntry>,
+    constraints: Vec<PersistentConstraint>,
+    cached_contacts: Vec<(ContactKey, CachedContact)>,
+    target_alpha: f32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SolveProperties {
     pub inverse_mass: f32,
@@ -71,6 +80,9 @@ pub struct SolverWorld {
     cached_contacts: Vec<(ContactKey, CachedContact)>,
     animation_targets: Vec<(BodyId, AnimationTarget)>,
     target_alpha: f32,
+    paused: bool,
+    last_failure: Option<StepFailure>,
+    failure_hint: Option<StepFailure>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,6 +99,73 @@ pub struct StepDiagnostics {
     pub deepest_penetration: f32,
     pub max_constraint_error: f32,
     pub position_iterations: u32,
+    pub rolled_back: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StepFailureKind {
+    NonFiniteBodyState,
+    UnnormalizedQuaternion,
+    NonFiniteConstraintResidual,
+    ExcessiveConstraintMultiplier,
+    ExcessiveContactMultiplier,
+    InvalidSolverState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepFailure {
+    pub kind: StepFailureKind,
+    pub body: Option<BodyId>,
+    pub constraint: Option<ConstraintId>,
+    pub contact: Option<ContactKey>,
+    pub source: Option<SolverError>,
+}
+
+impl StepFailure {
+    const fn new(kind: StepFailureKind) -> Self {
+        Self {
+            kind,
+            body: None,
+            constraint: None,
+            contact: None,
+            source: None,
+        }
+    }
+
+    const fn for_body(kind: StepFailureKind, body: BodyId) -> Self {
+        Self {
+            kind,
+            body: Some(body),
+            constraint: None,
+            contact: None,
+            source: None,
+        }
+    }
+
+    const fn for_constraint(kind: StepFailureKind, constraint: ConstraintId) -> Self {
+        Self {
+            kind,
+            body: None,
+            constraint: Some(constraint),
+            contact: None,
+            source: None,
+        }
+    }
+
+    const fn for_contact(kind: StepFailureKind, contact: ContactKey) -> Self {
+        Self {
+            kind,
+            body: None,
+            constraint: None,
+            contact: Some(contact),
+            source: None,
+        }
+    }
+
+    fn with_source(mut self, source: SolverError) -> Self {
+        self.source = Some(source);
+        self
+    }
 }
 
 impl SolverWorld {
@@ -124,6 +203,9 @@ impl SolverWorld {
             cached_contacts: Vec::new(),
             animation_targets: Vec::new(),
             target_alpha: 0.0,
+            paused: false,
+            last_failure: None,
+            failure_hint: None,
         })
     }
 
@@ -228,10 +310,55 @@ impl SolverWorld {
         target_alpha: f32,
         options: StepOptions,
     ) -> Result<StepDiagnostics, SolverError> {
+        if self.paused {
+            return Err(SolverError::WorldPaused);
+        }
+        validate_dt(dt)?;
         validate_finite("target_alpha", target_alpha)?;
         if !(0.0..=1.0).contains(&target_alpha) {
             return Err(SolverError::invalid_value("target_alpha", target_alpha));
         }
+
+        let snapshot = self.dynamic_snapshot();
+        self.failure_hint = None;
+        let result = self.run_substep(dt, target_alpha, options);
+        let source = result.as_ref().err().cloned();
+        let failure = self
+            .detect_step_failure()
+            .or_else(|| self.failure_hint.clone())
+            .or_else(|| {
+                source
+                    .as_ref()
+                    .map(|_| StepFailure::new(StepFailureKind::InvalidSolverState))
+            })
+            .map(|failure| {
+                if failure.source.is_none() {
+                    source
+                        .clone()
+                        .map_or(failure.clone(), |source| failure.with_source(source))
+                } else {
+                    failure
+                }
+            });
+        self.failure_hint = None;
+        if let Some(failure) = failure {
+            self.restore_dynamic_snapshot(snapshot);
+            self.paused = true;
+            self.last_failure = Some(failure);
+            return Ok(self.rollback_diagnostics(options.position_iterations));
+        }
+
+        let diagnostics = result?;
+        self.last_failure = None;
+        Ok(diagnostics)
+    }
+
+    fn run_substep(
+        &mut self,
+        dt: f32,
+        target_alpha: f32,
+        options: StepOptions,
+    ) -> Result<StepDiagnostics, SolverError> {
         self.predict(dt)?;
         self.apply_animation_inertia(target_alpha)?;
         let generated_contacts = self.generate_contacts()?;
@@ -244,12 +371,17 @@ impl SolverWorld {
             self.warm_start_contacts(&colliders, &contacts)?;
             for iteration in 0..options.position_iterations {
                 for (_, id) in schedule.iteration_order(iteration) {
+                    self.failure_hint = Some(StepFailure::for_constraint(
+                        StepFailureKind::InvalidSolverState,
+                        id,
+                    ));
                     let index = constraints
                         .binary_search_by_key(&id, |constraint| constraint.id)
                         .map_err(|_| {
                             SolverError::invalid_value("constraint_schedule_id", id.get())
                         })?;
                     self.solve_constraint(&mut constraints[index], target_alpha, dt)?;
+                    self.failure_hint = None;
                 }
                 self.solve_contact_iteration(&colliders, &mut contacts, iteration)?;
             }
@@ -267,6 +399,10 @@ impl SolverWorld {
         let constraints = core::mem::take(&mut self.constraints);
         let damping_result = (|| {
             for constraint in &constraints {
+                self.failure_hint = Some(StepFailure::for_constraint(
+                    StepFailureKind::InvalidSolverState,
+                    constraint.id,
+                ));
                 constraint.apply_damping(self, dt)?;
                 let target = self.animation_target(constraint.body_a);
                 constraint.apply_recovery_damping(
@@ -276,6 +412,7 @@ impl SolverWorld {
                     target_alpha,
                     dt,
                 )?;
+                self.failure_hint = None;
             }
             Ok::<(), SolverError>(())
         })();
@@ -297,7 +434,138 @@ impl SolverWorld {
             deepest_penetration,
             max_constraint_error,
             position_iterations: options.position_iterations,
+            rolled_back: false,
         })
+    }
+
+    #[must_use]
+    pub const fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    #[must_use]
+    pub fn last_failure(&self) -> Option<&StepFailure> {
+        self.last_failure.as_ref()
+    }
+
+    pub fn resume(&mut self) -> Result<(), SolverError> {
+        if let Some(failure) = self.detect_step_failure() {
+            return Err(step_failure_error(&failure));
+        }
+        self.paused = false;
+        self.last_failure = None;
+        Ok(())
+    }
+
+    fn dynamic_snapshot(&self) -> DynamicSnapshot {
+        DynamicSnapshot {
+            bodies: self.bodies.clone(),
+            constraints: self.constraints.clone(),
+            cached_contacts: self.cached_contacts.clone(),
+            target_alpha: self.target_alpha,
+        }
+    }
+
+    fn restore_dynamic_snapshot(&mut self, snapshot: DynamicSnapshot) {
+        self.bodies = snapshot.bodies;
+        self.constraints = snapshot.constraints;
+        self.cached_contacts = snapshot.cached_contacts;
+        self.target_alpha = snapshot.target_alpha;
+        self.failure_hint = None;
+    }
+
+    fn rollback_diagnostics(&self, position_iterations: u32) -> StepDiagnostics {
+        StepDiagnostics {
+            generated_contacts: 0,
+            active_contacts: u32::try_from(self.cached_contacts.len()).unwrap_or(u32::MAX),
+            deepest_penetration: 0.0,
+            max_constraint_error: 0.0,
+            position_iterations,
+            rolled_back: true,
+        }
+    }
+
+    fn detect_step_failure(&self) -> Option<StepFailure> {
+        for entry in &self.bodies {
+            let id = entry.desc.id;
+            let state = &entry.state;
+            let poses = [
+                state.pose,
+                state.previous_pose,
+                state.predicted_pose,
+                state.integrated_pose,
+            ];
+            if poses.iter().any(|pose| {
+                !pose.translation.is_finite()
+                    || !pose.rotation.is_finite()
+                    || !state.velocity.linear.is_finite()
+                    || !state.velocity.angular.is_finite()
+                    || !state.contact_translation_correction.is_finite()
+                    || !state.contact_rotation_correction.is_finite()
+            }) {
+                return Some(StepFailure::for_body(
+                    StepFailureKind::NonFiniteBodyState,
+                    id,
+                ));
+            }
+            if poses.iter().any(|pose| {
+                (pose.rotation.length_squared() - 1.0).abs()
+                    > crate::QUATERNION_NORMALIZATION_TOLERANCE
+            }) {
+                return Some(StepFailure::for_body(
+                    StepFailureKind::UnnormalizedQuaternion,
+                    id,
+                ));
+            }
+        }
+
+        for constraint in &self.constraints {
+            if !constraint.lambda.is_finite() {
+                return Some(StepFailure::for_constraint(
+                    StepFailureKind::InvalidSolverState,
+                    constraint.id,
+                ));
+            }
+            if max_abs_vec3(constraint.lambda) > MAX_MULTIPLIER_MAGNITUDE {
+                return Some(StepFailure::for_constraint(
+                    StepFailureKind::ExcessiveConstraintMultiplier,
+                    constraint.id,
+                ));
+            }
+        }
+
+        for (key, contact) in &self.cached_contacts {
+            if !contact.local_a.is_finite()
+                || !contact.local_b.is_finite()
+                || !contact.normal.is_finite()
+                || contact.tangents.iter().any(|tangent| !tangent.is_finite())
+                || !contact.lambdas.normal.is_finite()
+                || contact
+                    .lambdas
+                    .tangents
+                    .iter()
+                    .any(|lambda| !lambda.is_finite())
+            {
+                return Some(StepFailure::for_contact(
+                    StepFailureKind::InvalidSolverState,
+                    *key,
+                ));
+            }
+            let maximum_lambda = contact
+                .lambdas
+                .tangents
+                .iter()
+                .fold(contact.lambdas.normal.abs(), |maximum, lambda| {
+                    maximum.max(lambda.abs())
+                });
+            if maximum_lambda > MAX_MULTIPLIER_MAGNITUDE {
+                return Some(StepFailure::for_contact(
+                    StepFailureKind::ExcessiveContactMultiplier,
+                    *key,
+                ));
+            }
+        }
+        None
     }
 
     pub fn predict(&mut self, dt: f32) -> Result<(), SolverError> {
@@ -336,6 +604,8 @@ impl SolverWorld {
         validate_vec3("translation_correction", translation)?;
         validate_vec3("rotation_correction", rotation_scaled_axis)?;
         let state = self.body_mut(id)?;
+        let previous_translation = state.predicted_pose.translation;
+        let previous_rotation = state.predicted_pose.rotation;
 
         state.predicted_pose.translation += translation;
         let delta_rotation = Quat::from_scaled_axis(rotation_scaled_axis);
@@ -343,8 +613,14 @@ impl SolverWorld {
             (delta_rotation * state.predicted_pose.rotation).normalize();
 
         if kind == CorrectionKind::NonVelocityContact {
-            state.contact_translation_correction += translation;
-            state.contact_rotation_correction += rotation_scaled_axis;
+            state.contact_translation_correction +=
+                state.predicted_pose.translation - previous_translation;
+            let mut applied_rotation =
+                state.predicted_pose.rotation * previous_rotation.conjugate();
+            if applied_rotation.w < 0.0 {
+                applied_rotation = -applied_rotation;
+            }
+            state.contact_rotation_correction += applied_rotation.to_scaled_axis();
         }
 
         Ok(())
@@ -473,10 +749,18 @@ impl SolverWorld {
         Ok(&self.constraints[index])
     }
 
-    fn max_constraint_error(&self) -> Result<f32, SolverError> {
+    fn max_constraint_error(&mut self) -> Result<f32, SolverError> {
         let mut maximum: f32 = 0.0;
-        for constraint in &self.constraints {
-            maximum = maximum.max(constraint.error(self)?);
+        for index in 0..self.constraints.len() {
+            let constraint = self.constraints[index].clone();
+            self.failure_hint = Some(StepFailure::for_constraint(
+                StepFailureKind::NonFiniteConstraintResidual,
+                constraint.id,
+            ));
+            let error = constraint.error(self)?;
+            validate_finite("constraint_residual", error)?;
+            maximum = maximum.max(error);
+            self.failure_hint = None;
         }
         Ok(maximum)
     }
@@ -488,6 +772,10 @@ impl SolverWorld {
         let mut generated = Vec::new();
 
         for pair in candidates {
+            self.failure_hint = Some(StepFailure::for_contact(
+                StepFailureKind::InvalidSolverState,
+                ContactKey::new(pair, 0, 0),
+            ));
             let previous_a = collider_by_id(&previous, pair.first())?;
             let previous_b = collider_by_id(&previous, pair.second())?;
             let collider_a = collider_by_id(&predicted, pair.first())?;
@@ -495,6 +783,7 @@ impl SolverWorld {
             let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
             let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
             else {
+                self.failure_hint = None;
                 continue;
             };
             let radius_a = collider_a.shape.effective_radius()?;
@@ -534,6 +823,7 @@ impl SolverWorld {
                 &previous_contacts,
                 match_context,
             )?);
+            self.failure_hint = None;
         }
 
         generated.sort_by_key(|(key, _)| *key);
@@ -547,9 +837,14 @@ impl SolverWorld {
         contacts: &[(ContactKey, CachedContact)],
     ) -> Result<(), SolverError> {
         for (key, contact) in contacts {
+            self.failure_hint = Some(StepFailure::for_contact(
+                StepFailureKind::InvalidSolverState,
+                *key,
+            ));
             if contact.lambdas.normal > 0.0 {
                 self.apply_contact_lambda(colliders, *key, contact, contact.lambdas.normal)?;
             }
+            self.failure_hint = None;
         }
         Ok(())
     }
@@ -562,11 +857,21 @@ impl SolverWorld {
     ) -> Result<(), SolverError> {
         if iteration.is_multiple_of(2) {
             for (key, contact) in contacts {
+                self.failure_hint = Some(StepFailure::for_contact(
+                    StepFailureKind::InvalidSolverState,
+                    *key,
+                ));
                 self.solve_contact(colliders, *key, contact)?;
+                self.failure_hint = None;
             }
         } else {
             for (key, contact) in contacts.iter_mut().rev() {
+                self.failure_hint = Some(StepFailure::for_contact(
+                    StepFailureKind::InvalidSolverState,
+                    *key,
+                ));
                 self.solve_contact(colliders, *key, contact)?;
+                self.failure_hint = None;
             }
         }
         Ok(())
@@ -675,7 +980,12 @@ impl SolverWorld {
         contacts: &mut [(ContactKey, CachedContact)],
     ) -> Result<(), SolverError> {
         for (key, contact) in contacts {
+            self.failure_hint = Some(StepFailure::for_contact(
+                StepFailureKind::InvalidSolverState,
+                *key,
+            ));
             self.solve_contact_velocity(colliders, *key, contact)?;
+            self.failure_hint = None;
         }
         Ok(())
     }
@@ -885,13 +1195,22 @@ impl SolverWorld {
         )
     }
 
-    fn contact_residuals(&self) -> Result<(u32, f32), SolverError> {
+    fn contact_residuals(&mut self) -> Result<(u32, f32), SolverError> {
         let colliders = self.predicted_colliders()?;
         let pipeline = CollisionPipeline::try_new(&self.constraints)?;
         let candidates = pipeline.candidate_pairs(&colliders, &colliders)?;
         let mut active = 0_usize;
         let mut deepest: f32 = 0.0;
         for pair in candidates {
+            let contact = self
+                .cached_contacts
+                .iter()
+                .find(|(key, _)| key.pair == pair)
+                .map_or_else(|| ContactKey::new(pair, 0, 0), |(key, _)| *key);
+            self.failure_hint = Some(StepFailure::for_contact(
+                StepFailureKind::InvalidSolverState,
+                contact,
+            ));
             let collider_a = collider_by_id(&colliders, pair.first())?;
             let collider_b = collider_by_id(&colliders, pair.second())?;
             let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
@@ -901,11 +1220,15 @@ impl SolverWorld {
                     active = active.checked_add(1).ok_or_else(|| {
                         SolverError::invalid_value("contact_count", active as f64)
                     })?;
+                    validate_nonnegative("contact_penetration", point.penetration)?;
                     deepest = deepest.max(point.penetration);
                 }
             }
+            self.failure_hint = None;
         }
-        Ok((contact_count(active)?, deepest))
+        let active = contact_count(active)?;
+        validate_finite("deepest_penetration", deepest)?;
+        Ok((active, deepest))
     }
 
     fn collider_snapshots(
@@ -956,6 +1279,10 @@ impl SolverWorld {
     fn apply_animation_inertia(&mut self, target_alpha: f32) -> Result<(), SolverError> {
         let targets = self.animation_targets.clone();
         for (id, target) in targets {
+            self.failure_hint = Some(StepFailure::for_body(
+                StepFailureKind::InvalidSolverState,
+                id,
+            ));
             let previous = target.pose_at(self.target_alpha);
             let current = target.pose_at(target_alpha);
             let (translation, rotation) = crate::constraint::reference_frame_delta(
@@ -965,6 +1292,7 @@ impl SolverWorld {
                 target.rotation_inertia,
             );
             self.shift_reference_frame(id, previous, translation, rotation)?;
+            self.failure_hint = None;
         }
         Ok(())
     }
@@ -1329,5 +1657,19 @@ fn validate_dt(dt: f32) -> Result<(), SolverError> {
         Err(SolverError::invalid_value("dt", dt))
     } else {
         Ok(())
+    }
+}
+
+fn max_abs_vec3(value: Vec3) -> f32 {
+    value.x.abs().max(value.y.abs()).max(value.z.abs())
+}
+
+fn step_failure_error(failure: &StepFailure) -> SolverError {
+    if let Some(source) = &failure.source {
+        source.clone()
+    } else if let Some(body) = failure.body {
+        SolverError::NonFiniteState(body)
+    } else {
+        SolverError::invalid_value("solver_state", failure.kind as u8)
     }
 }

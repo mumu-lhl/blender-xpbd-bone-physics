@@ -224,10 +224,23 @@ fn fallback_normal(
 }
 
 fn usable_normal(candidate: Vec3) -> Option<Vec3> {
-    if candidate.is_finite() && candidate.length_squared() > GEOMETRY_EPSILON_SQUARED {
-        Some(candidate.normalize())
-    } else {
+    if !candidate.is_finite() {
         None
+    } else {
+        let scale = candidate
+            .x
+            .abs()
+            .max(candidate.y.abs())
+            .max(candidate.z.abs());
+        if scale == 0.0 {
+            return None;
+        }
+        let scaled = candidate / scale;
+        let scaled_length = scaled.length();
+        if scale <= GEOMETRY_EPSILON_SQUARED.sqrt() / scaled_length {
+            return None;
+        }
+        Some(scaled / scaled_length)
     }
 }
 

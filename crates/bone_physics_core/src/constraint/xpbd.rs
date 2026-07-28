@@ -51,7 +51,16 @@ pub fn solve_scalar_row(
             .dot(properties.world_inverse_inertia * gradient.angular);
     }
 
-    let alpha_tilde = row.compliance / (dt * dt);
+    let alpha_tilde = if row.compliance == 0.0 {
+        0.0
+    } else {
+        let dt = f64::from(dt);
+        let value = f64::from(row.compliance) / (dt * dt);
+        if !value.is_finite() || value > f64::from(f32::MAX) {
+            return Err(SolverError::invalid_value("alpha_tilde", value));
+        }
+        value as f32
+    };
     let denominator = effective_inverse_mass + alpha_tilde;
     if denominator <= MIN_EFFECTIVE_DENOMINATOR {
         return Ok(RowResult {

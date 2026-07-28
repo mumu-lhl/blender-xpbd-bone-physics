@@ -34,8 +34,9 @@ pub use graph::{ConstraintClass, ConstraintColor, ConstraintSchedule};
 pub use id::{BodyId, ColliderId, ConstraintId};
 pub use math::{quat_exp, quat_log, world_inverse_inertia};
 pub use parameter::{CurveInterpolation, CurvePoint, ParameterCurve};
-pub use pose::{Pose, Velocity};
+pub use pose::{Pose, QUATERNION_NORMALIZATION_TOLERANCE, Velocity};
 pub use time::{FixedClock, QualityPolicy, StepBatch};
 pub use world::{
-    BodyInit, CorrectionKind, SolverConfig, SolverWorld, StepDiagnostics, StepOptions,
+    BodyInit, CorrectionKind, MAX_MULTIPLIER_MAGNITUDE, SolverConfig, SolverWorld, StepDiagnostics,
+    StepFailure, StepFailureKind, StepOptions,
 };

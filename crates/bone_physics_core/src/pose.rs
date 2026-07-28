@@ -4,7 +4,7 @@ use crate::SolverError;
 use crate::error::validate_finite;
 
 const MIN_QUATERNION_LENGTH_SQUARED: f32 = 1.0e-12;
-const NORMALIZED_TOLERANCE: f32 = 1.0e-5;
+pub const QUATERNION_NORMALIZATION_TOLERANCE: f32 = 1.0e-5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
@@ -32,7 +32,7 @@ impl Pose {
         validate_vec3("translation", self.translation)?;
         validate_quaternion(self.rotation)?;
         let normalization_error = (self.rotation.length_squared() - 1.0).abs();
-        if normalization_error <= NORMALIZED_TOLERANCE {
+        if normalization_error <= QUATERNION_NORMALIZATION_TOLERANCE {
             Ok(())
         } else {
             Err(SolverError::invalid_value(

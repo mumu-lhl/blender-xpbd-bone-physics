@@ -1,8 +1,8 @@
 use bone_physics_core::{
     BodyId, BodyInit, BoneBodyDesc, Capsule, CapsuleColliderDesc, ColliderId, CollisionFilter,
-    ConstraintId, ContactKey, ContactMaterial, PairKey, PersistentConstraint, Pose, QualityPolicy,
-    SolverConfig, SolverError, SolverWorld, StepFailureKind, StepOptions, Velocity,
-    MAX_MULTIPLIER_MAGNITUDE, QUATERNION_NORMALIZATION_TOLERANCE,
+    ConstraintId, ContactKey, ContactMaterial, MAX_MULTIPLIER_MAGNITUDE, PairKey,
+    PersistentConstraint, Pose, QUATERNION_NORMALIZATION_TOLERANCE, QualityPolicy, SolverConfig,
+    SolverError, SolverWorld, StepFailureKind, StepOptions, Velocity,
 };
 use glam::{Quat, Vec3};
 
@@ -96,18 +96,8 @@ fn overflow_world(input_order: [u32; 2]) -> SolverWorld {
     let base = 0.5 * f32::MAX;
     let speed = 0.25 * f32::MAX;
     let bodies = vec![
-        body(
-            input_order[0],
-            base * Vec3::X,
-            speed * Vec3::X,
-            1.0,
-        ),
-        body(
-            input_order[1],
-            base * Vec3::X,
-            speed * Vec3::X,
-            1.0,
-        ),
+        body(input_order[0], base * Vec3::X, speed * Vec3::X, 1.0),
+        body(input_order[1], base * Vec3::X, speed * Vec3::X, 1.0),
         body(1, base * Vec3::X, Vec3::ZERO, 0.0),
     ];
     let mut world = world(bodies);
@@ -119,10 +109,12 @@ fn overflow_world(input_order: [u32; 2]) -> SolverWorld {
 
 #[test]
 fn successful_substep_reports_finite_residuals_without_rollback() {
-    assert!(QUATERNION_NORMALIZATION_TOLERANCE > 0.0);
-    assert!(QUATERNION_NORMALIZATION_TOLERANCE < 1.0);
-    assert!(MAX_MULTIPLIER_MAGNITUDE.is_finite());
-    assert!(MAX_MULTIPLIER_MAGNITUDE > 0.0);
+    const {
+        assert!(QUATERNION_NORMALIZATION_TOLERANCE > 0.0);
+        assert!(QUATERNION_NORMALIZATION_TOLERANCE < 1.0);
+        assert!(MAX_MULTIPLIER_MAGNITUDE.is_finite());
+        assert!(MAX_MULTIPLIER_MAGNITUDE > 0.0);
+    }
 
     let mut world = world(vec![body(1, Vec3::ZERO, Vec3::ZERO, 1.0)]);
     let diagnostics = world.substep(1.0 / 120.0, 1.0, options(4)).unwrap();
@@ -254,10 +246,7 @@ fn excessive_finite_constraint_multiplier_rolls_back_and_names_constraint() {
     assert_eq!(body_bits(&world, BodyId::new(2)), body_before);
     assert_eq!(world.constraint_lambda(constraint_id), Some(0.0));
     let failure = world.last_failure().unwrap();
-    assert_eq!(
-        failure.kind,
-        StepFailureKind::ExcessiveConstraintMultiplier
-    );
+    assert_eq!(failure.kind, StepFailureKind::ExcessiveConstraintMultiplier);
     assert_eq!(failure.body, None);
     assert_eq!(failure.constraint, Some(constraint_id));
     assert_eq!(failure.contact, None);
@@ -303,9 +292,63 @@ fn multiple_non_finite_bodies_report_lowest_stable_id_independent_of_input_order
         let diagnostics = world.substep(3.0, 1.0, options(1)).unwrap();
 
         assert!(diagnostics.rolled_back);
-        assert_eq!(
-            world.last_failure().unwrap().body,
-            Some(BodyId::new(2))
-        );
+        assert_eq!(world.last_failure().unwrap().body, Some(BodyId::new(2)));
     }
+}
+
+#[test]
+fn overflowing_constraint_residual_rolls_back_and_names_constraint() {
+    let mut world = world(vec![
+        body(1, -0.75 * f32::MAX * Vec3::X, Vec3::ZERO, 0.0),
+        body(2, 0.75 * f32::MAX * Vec3::X, Vec3::ZERO, 0.0),
+    ]);
+    let constraint_id = ConstraintId::new(41);
+    world
+        .set_constraints(vec![PersistentConstraint::anchor(
+            constraint_id,
+            BodyId::new(1),
+            BodyId::new(2),
+            Vec3::ZERO,
+            Vec3::ZERO,
+            0.0,
+            0.0,
+        )])
+        .unwrap();
+
+    let diagnostics = world.substep(1.0, 1.0, options(0)).unwrap();
+
+    assert!(diagnostics.rolled_back);
+    assert_finite_diagnostics(diagnostics);
+    let failure = world.last_failure().unwrap();
+    assert_eq!(failure.kind, StepFailureKind::NonFiniteConstraintResidual);
+    assert_eq!(failure.constraint, Some(constraint_id));
+    assert!(failure.source.is_some());
+}
+
+#[test]
+fn constraint_solver_error_preserves_stable_id_and_source() {
+    let mut world = world(vec![
+        body(1, -0.75 * f32::MAX * Vec3::X, Vec3::ZERO, 0.0),
+        body(2, 0.75 * f32::MAX * Vec3::X, Vec3::ZERO, 1.0),
+    ]);
+    let constraint_id = ConstraintId::new(42);
+    world
+        .set_constraints(vec![PersistentConstraint::anchor(
+            constraint_id,
+            BodyId::new(1),
+            BodyId::new(2),
+            Vec3::ZERO,
+            Vec3::ZERO,
+            0.0,
+            0.0,
+        )])
+        .unwrap();
+
+    let diagnostics = world.substep(1.0, 1.0, options(1)).unwrap();
+
+    assert!(diagnostics.rolled_back);
+    let failure = world.last_failure().unwrap();
+    assert_eq!(failure.kind, StepFailureKind::InvalidSolverState);
+    assert_eq!(failure.constraint, Some(constraint_id));
+    assert!(failure.source.is_some());
 }
