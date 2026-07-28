@@ -2,7 +2,7 @@ use core::cmp::Ordering;
 
 use glam::Vec3;
 
-use super::capsule::PairKey;
+use super::capsule::{PairKey, usable_normal};
 use super::shape::CapsuleCollider;
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::pose::validate_vec3;
@@ -282,6 +282,14 @@ fn validated_contact(
     validate_vec3("analytic_contact_point_capsule", point_capsule)?;
     validate_vec3("analytic_contact_point_proxy", point_proxy)?;
     validate_vec3("analytic_contact_normal", normal)?;
+    let normal_length = normal.length();
+    validate_finite("analytic_contact_normal_length", normal_length)?;
+    if (normal_length - 1.0).abs() > 1.0e-4 {
+        return Err(SolverError::invalid_value(
+            "analytic_contact_normal_length",
+            normal_length,
+        ));
+    }
     validate_finite("analytic_contact_separation", separation)?;
     Ok(AnalyticContact {
         point_capsule,
@@ -350,14 +358,6 @@ fn fallback_normal(
 
 fn pair_selector(pair: PairKey) -> u32 {
     pair.first().get().wrapping_mul(31) ^ pair.second().get()
-}
-
-fn usable_normal(candidate: Vec3) -> Option<Vec3> {
-    if candidate.is_finite() && candidate.length_squared() > GEOMETRY_EPSILON_SQUARED {
-        Some(candidate.normalize())
-    } else {
-        None
-    }
 }
 
 fn ordered_segment((a, b): (Vec3, Vec3)) -> (Vec3, Vec3) {

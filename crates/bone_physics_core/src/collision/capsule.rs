@@ -223,7 +223,7 @@ fn fallback_normal(
     usable_normal(basis).ok_or(SolverError::invalid_value("contact_normal", f64::NAN))
 }
 
-fn usable_normal(candidate: Vec3) -> Option<Vec3> {
+pub(super) fn usable_normal(candidate: Vec3) -> Option<Vec3> {
     if !candidate.is_finite() {
         None
     } else {

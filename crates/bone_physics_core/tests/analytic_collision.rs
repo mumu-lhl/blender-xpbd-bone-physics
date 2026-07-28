@@ -930,3 +930,21 @@ fn repeated_and_equivalent_queries_are_bit_deterministic() {
     assert_eq!(contact_bits(&first), contact_bits(&repeated));
     assert_eq!(contact_bits(&first), contact_bits(&equivalent));
 }
+
+#[test]
+fn exact_coincidence_scale_normalizes_extreme_finite_relative_velocity() {
+    let capsule = capsule_sphere(100, Vec3::ZERO, 0.5);
+    let proxy = proxy(
+        101,
+        Pose::IDENTITY,
+        Vec3::splat(0.5 * f32::MAX),
+        AnalyticShape::Sphere { radius: 0.5 },
+    );
+
+    let contact = capsule_analytic_contact(&capsule, &proxy, 0.125)
+        .unwrap()
+        .unwrap();
+
+    assert_finite_canonical_contact(&contact);
+    assert_vec3_close(contact.normal, Vec3::ONE.normalize());
+}
