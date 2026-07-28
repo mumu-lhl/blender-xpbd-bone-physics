@@ -14,3 +14,5 @@ codegen-units = 1
 lto = "thin"
 panic = "abort"
 
+[profile.bench]
+lto = false

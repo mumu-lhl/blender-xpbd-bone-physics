@@ -6,6 +6,8 @@ on:
     branches:
       - main
       - "feat/**"
+  schedule:
+    - cron: "23 4 * * 1"
 
 permissions:
   contents: read
@@ -24,10 +26,21 @@ jobs:
       - name: Check Rust workspace
         shell: bash
         run: bash scripts/ci/capture.sh artifacts
+      - name: Measure scheduled Rust benchmarks
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: cargo bench --workspace 2>&1 | tee artifacts/cargo-bench.log
       - name: Upload Rust report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rust-ci-report
           path: artifacts/
+          if-no-files-found: error
+      - name: Upload numerical reference report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-reference-report
+          path: artifacts/rust-reference-report.json
           if-no-files-found: error
