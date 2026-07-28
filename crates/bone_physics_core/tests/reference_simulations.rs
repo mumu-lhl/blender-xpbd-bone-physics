@@ -1,0 +1,418 @@
+use std::fmt::Write as _;
+use std::fs;
+use std::path::PathBuf;
+use std::time::Instant;
+
+use bone_physics_core::{
+    BodyId, BodyInit, BoneBodyDesc, Capsule, CapsuleColliderDesc, ColliderId, CollisionFilter,
+    ConstraintId, ContactMaterial, PersistentConstraint, Pose, QualityPolicy, SolverConfig,
+    SolverWorld, StepDiagnostics, StepOptions, Velocity,
+};
+use glam::{Quat, Vec3};
+
+const DT: f32 = 1.0 / 120.0;
+const STEPS: usize = 240;
+const BODY_LENGTH: f32 = 0.5;
+const COLLIDER_RADIUS: f32 = 0.12;
+const HARD_ANCHOR_TOLERANCE: f32 = 5.0e-5;
+const PENETRATION_TOLERANCE: f32 = 0.01 * COLLIDER_RADIUS;
+
+#[derive(Clone, Debug, PartialEq)]
+struct ReferenceResult {
+    scene: &'static str,
+    max_bone_length_error: f32,
+    max_joint_separation: f32,
+    max_residual_penetration: f32,
+    peak_velocity: f32,
+    peak_angular_velocity: f32,
+    generated_contacts: u64,
+    active_contacts: u64,
+    final_poses: Vec<Pose>,
+    simulate_seconds: f64,
+}
+
+fn body(id: u32, translation: Vec3, dynamic: bool, velocity: Vec3) -> BodyInit {
+    let inverse = if dynamic { 1.0 } else { 0.0 };
+    let pose = Pose::try_new(translation, Quat::IDENTITY).unwrap();
+    BodyInit {
+        desc: BoneBodyDesc {
+            id: BodyId::new(id),
+            rest_pose: pose,
+            local_center_of_mass: Vec3::ZERO,
+            local_head: Vec3::Y * (-0.5 * BODY_LENGTH),
+            local_tail: Vec3::Y * (0.5 * BODY_LENGTH),
+            inverse_mass: inverse,
+            inverse_inertia: Vec3::splat(inverse),
+            gravity_scale: inverse,
+            linear_damping: if dynamic { 0.25 } else { 0.0 },
+            angular_damping: if dynamic { 0.25 } else { 0.0 },
+        },
+        pose,
+        velocity: Velocity {
+            linear: velocity,
+            angular: Vec3::ZERO,
+        },
+    }
+}
+
+fn options() -> StepOptions {
+    StepOptions {
+        position_iterations: 64,
+        contact_iterations: 64,
+        quality: QualityPolicy::AuthoritativeBake,
+    }
+}
+
+fn collider(id: u32, body: u32) -> CapsuleColliderDesc {
+    CapsuleColliderDesc {
+        id: ColliderId::new(id),
+        body: BodyId::new(body),
+        shape: Capsule::try_new(
+            Vec3::Y * (-0.4 * BODY_LENGTH),
+            Vec3::Y * (0.4 * BODY_LENGTH),
+            COLLIDER_RADIUS,
+            0.0,
+        )
+        .unwrap(),
+        material: ContactMaterial::try_new(0.35, 0.0).unwrap(),
+        filter: CollisionFilter::default(),
+    }
+}
+
+fn anchor(id: u32, upper: u32, lower: u32, compliance: f32) -> PersistentConstraint {
+    PersistentConstraint::anchor(
+        ConstraintId::new(id),
+        BodyId::new(upper),
+        BodyId::new(lower),
+        Vec3::Y * (-0.5 * BODY_LENGTH),
+        Vec3::Y * (0.5 * BODY_LENGTH),
+        compliance,
+        0.05,
+    )
+}
+
+fn simulate(
+    scene: &'static str,
+    mut world: SolverWorld,
+    body_ids: &[u32],
+    hard_constraints: &[u32],
+) -> ReferenceResult {
+    let started = Instant::now();
+    let mut max_bone_length_error: f32 = 0.0;
+    let mut max_joint_separation: f32 = 0.0;
+    let mut max_residual_penetration: f32 = 0.0;
+    let mut peak_velocity: f32 = 0.0;
+    let mut peak_angular_velocity: f32 = 0.0;
+    let mut generated_contacts = 0_u64;
+    let mut active_contacts = 0_u64;
+
+    for _ in 0..STEPS {
+        let diagnostics = world.substep(DT, 1.0, options()).unwrap();
+        assert!(!diagnostics.rolled_back, "{scene} rolled back");
+        accumulate_diagnostics(
+            diagnostics,
+            &mut max_residual_penetration,
+            &mut generated_contacts,
+            &mut active_contacts,
+        );
+
+        for constraint in hard_constraints {
+            let error = world.anchor_error(ConstraintId::new(*constraint)).unwrap();
+            max_bone_length_error = max_bone_length_error.max(error);
+            max_joint_separation = max_joint_separation.max(error);
+        }
+        for id in body_ids {
+            let state = world.body(BodyId::new(*id)).unwrap();
+            peak_velocity = peak_velocity.max(state.velocity.linear.length());
+            peak_angular_velocity = peak_angular_velocity.max(state.velocity.angular.length());
+        }
+    }
+
+    let final_poses = body_ids
+        .iter()
+        .map(|id| world.body(BodyId::new(*id)).unwrap().pose)
+        .collect();
+    ReferenceResult {
+        scene,
+        max_bone_length_error,
+        max_joint_separation,
+        max_residual_penetration,
+        peak_velocity,
+        peak_angular_velocity,
+        generated_contacts,
+        active_contacts,
+        final_poses,
+        simulate_seconds: started.elapsed().as_secs_f64(),
+    }
+}
+
+fn accumulate_diagnostics(
+    diagnostics: StepDiagnostics,
+    max_penetration: &mut f32,
+    generated_contacts: &mut u64,
+    active_contacts: &mut u64,
+) {
+    assert!(diagnostics.deepest_penetration.is_finite());
+    assert!(diagnostics.max_constraint_error.is_finite());
+    *max_penetration = max_penetration.max(diagnostics.deepest_penetration);
+    *generated_contacts += u64::from(diagnostics.generated_contacts);
+    *active_contacts += u64::from(diagnostics.active_contacts);
+}
+
+fn pendulum() -> ReferenceResult {
+    let mut world = SolverWorld::new(
+        SolverConfig {
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            fixed_dt: DT,
+        },
+        vec![
+            body(1, Vec3::ZERO, false, Vec3::ZERO),
+            body(2, Vec3::new(0.0, -BODY_LENGTH, 0.0), true, Vec3::X * 1.5),
+        ],
+    )
+    .unwrap();
+    world.set_constraints(vec![anchor(1, 1, 2, 0.0)]).unwrap();
+    simulate("single_pendulum", world, &[1, 2], &[1])
+}
+
+fn colliding_hair_chains() -> ReferenceResult {
+    let mut bodies = Vec::new();
+    let mut constraints = Vec::new();
+    let mut colliders = Vec::new();
+    let mut body_ids = Vec::new();
+    let mut hard_constraints = Vec::new();
+
+    for (chain, x, velocity) in [(0_u32, -0.13, Vec3::X * 0.6), (1_u32, 0.13, Vec3::X * -0.6)] {
+        let root = 10 + chain * 10;
+        bodies.push(body(root, Vec3::new(x, 0.0, 0.0), false, Vec3::ZERO));
+        body_ids.push(root);
+        for segment in 1..=3 {
+            let id = root + segment;
+            bodies.push(body(
+                id,
+                Vec3::new(x, -(segment as f32) * BODY_LENGTH, 0.0),
+                true,
+                velocity,
+            ));
+            body_ids.push(id);
+            colliders.push(collider(100 + id, id));
+            let constraint = 1000 + chain * 10 + segment;
+            constraints.push(anchor(constraint, id - 1, id, 0.0));
+            hard_constraints.push(constraint);
+        }
+    }
+
+    let mut world = SolverWorld::new(
+        SolverConfig {
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            fixed_dt: DT,
+        },
+        bodies,
+    )
+    .unwrap();
+    world.set_constraints(constraints).unwrap();
+    world.set_colliders(colliders).unwrap();
+    simulate("colliding_hair_chains", world, &body_ids, &hard_constraints)
+}
+
+fn root_stiff_tip_soft_tail() -> ReferenceResult {
+    let mut bodies = vec![body(30, Vec3::ZERO, false, Vec3::ZERO)];
+    let mut constraints = Vec::new();
+    let mut body_ids = vec![30];
+    for segment in 1..=5 {
+        let id = 30 + segment;
+        bodies.push(body(
+            id,
+            Vec3::new(0.0, -(segment as f32) * BODY_LENGTH, 0.0),
+            true,
+            if segment == 5 {
+                Vec3::X * 1.5
+            } else {
+                Vec3::ZERO
+            },
+        ));
+        body_ids.push(id);
+        let compliance = match segment {
+            1 => 0.0,
+            2 => 1.0e-7,
+            3 => 1.0e-6,
+            4 => 1.0e-5,
+            _ => 1.0e-4,
+        };
+        constraints.push(anchor(2000 + segment, id - 1, id, compliance));
+    }
+    let mut world = SolverWorld::new(
+        SolverConfig {
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            fixed_dt: DT,
+        },
+        bodies,
+    )
+    .unwrap();
+    world.set_constraints(constraints).unwrap();
+    simulate("root_stiff_tip_soft_tail", world, &body_ids, &[2001])
+}
+
+fn closed_skirt_lattice() -> ReferenceResult {
+    let corners = [
+        Vec3::new(-0.45, 0.0, -0.45),
+        Vec3::new(0.45, 0.0, -0.45),
+        Vec3::new(0.45, 0.0, 0.45),
+        Vec3::new(-0.45, 0.0, 0.45),
+    ];
+    let mut bodies = Vec::new();
+    let mut constraints = Vec::new();
+    let mut colliders = Vec::new();
+    let mut body_ids = Vec::new();
+    let mut hard_constraints = Vec::new();
+
+    for (index, corner) in corners.into_iter().enumerate() {
+        let root = 50 + (index as u32) * 10;
+        let tip = root + 1;
+        bodies.push(body(root, corner, false, Vec3::ZERO));
+        bodies.push(body(tip, corner - Vec3::Y * BODY_LENGTH, true, Vec3::ZERO));
+        constraints.push(anchor(3000 + index as u32, root, tip, 0.0));
+        colliders.push(collider(4000 + index as u32, tip));
+        body_ids.extend([root, tip]);
+        hard_constraints.push(3000 + index as u32);
+    }
+
+    for index in 0..4_u32 {
+        let next = (index + 1) % 4;
+        let body_a = 51 + index * 10;
+        let body_b = 51 + next * 10;
+        constraints.push(PersistentConstraint::distance(
+            ConstraintId::new(3100 + index),
+            BodyId::new(body_a),
+            BodyId::new(body_b),
+            Vec3::ZERO,
+            Vec3::ZERO,
+            0.9,
+            2.0e-5,
+            0.05,
+        ));
+        let diagonal = (index + 2) % 4;
+        constraints.push(PersistentConstraint::distance(
+            ConstraintId::new(3200 + index),
+            BodyId::new(body_a),
+            BodyId::new(51 + diagonal * 10),
+            Vec3::ZERO,
+            Vec3::ZERO,
+            0.9 * 2.0_f32.sqrt(),
+            5.0e-5,
+            0.05,
+        ));
+    }
+
+    let mut world = SolverWorld::new(
+        SolverConfig {
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            fixed_dt: DT,
+        },
+        bodies,
+    )
+    .unwrap();
+    world.set_constraints(constraints).unwrap();
+    world.set_colliders(colliders).unwrap();
+    simulate("closed_skirt_lattice", world, &body_ids, &hard_constraints)
+}
+
+fn run_references() -> Vec<ReferenceResult> {
+    vec![
+        pendulum(),
+        colliding_hair_chains(),
+        root_stiff_tip_soft_tail(),
+        closed_skirt_lattice(),
+    ]
+}
+
+fn report_path() -> PathBuf {
+    std::env::var_os("BONE_PHYSICS_REFERENCE_OUTPUT").map_or_else(
+        || {
+            std::env::temp_dir().join(format!(
+                "bone-physics-reference-{}.json",
+                std::process::id()
+            ))
+        },
+        PathBuf::from,
+    )
+}
+
+fn write_report(results: &[ReferenceResult]) -> PathBuf {
+    let mut json = String::from("[\n");
+    for (index, result) in results.iter().enumerate() {
+        let comma = if index + 1 == results.len() { "" } else { "," };
+        writeln!(
+            json,
+            concat!(
+                "  {{\"scene\":\"{}\",\"max_bone_length_error\":{},",
+                "\"max_joint_separation\":{},\"max_residual_penetration\":{},",
+                "\"peak_velocity\":{},\"peak_angular_velocity\":{},",
+                "\"generated_contacts\":{},\"active_contacts\":{},",
+                "\"phase_timings\":{{\"simulate_seconds\":{}}}}}{}"
+            ),
+            result.scene,
+            result.max_bone_length_error,
+            result.max_joint_separation,
+            result.max_residual_penetration,
+            result.peak_velocity,
+            result.peak_angular_velocity,
+            result.generated_contacts,
+            result.active_contacts,
+            result.simulate_seconds,
+            comma,
+        )
+        .unwrap();
+    }
+    json.push_str("]\n");
+
+    let path = report_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(&path, json).unwrap();
+    path
+}
+
+#[test]
+fn authoritative_reference_scenes_are_stable_and_within_tolerance() {
+    let first = run_references();
+    let second = run_references();
+
+    for (left, right) in first.iter().zip(&second) {
+        assert_eq!(left.scene, right.scene);
+        assert_eq!(
+            left.final_poses, right.final_poses,
+            "{} changed",
+            left.scene
+        );
+        assert!(
+            left.max_joint_separation <= HARD_ANCHOR_TOLERANCE,
+            "{} joint separation {} exceeded {}",
+            left.scene,
+            left.max_joint_separation,
+            HARD_ANCHOR_TOLERANCE,
+        );
+        assert!(
+            left.max_residual_penetration <= PENETRATION_TOLERANCE,
+            "{} penetration {} exceeded {}",
+            left.scene,
+            left.max_residual_penetration,
+            PENETRATION_TOLERANCE,
+        );
+        assert!(left.peak_velocity.is_finite());
+        assert!(left.peak_angular_velocity.is_finite());
+    }
+    assert!(
+        first
+            .iter()
+            .find(|result| result.scene == "colliding_hair_chains")
+            .unwrap()
+            .generated_contacts
+            > 0
+    );
+
+    let path = write_report(&first);
+    assert!(fs::metadata(&path).unwrap().len() > 2);
+    println!("reference report: {}", path.display());
+}
