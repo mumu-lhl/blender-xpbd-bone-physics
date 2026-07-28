@@ -18,6 +18,7 @@ EXPECTED_SCENES = {
 FINITE_FIELDS = {
     "max_bone_length_error",
     "max_joint_separation",
+    "max_hard_anchor_separation",
     "max_residual_penetration",
     "peak_velocity",
     "peak_angular_velocity",

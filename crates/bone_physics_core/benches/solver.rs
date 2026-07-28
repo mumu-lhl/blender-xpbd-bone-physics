@@ -1,9 +1,10 @@
 use std::hint::black_box;
 
 use bone_physics_core::{
-    BodyId, BodyInit, BoneBodyDesc, Capsule, CapsuleColliderDesc, ColliderId, CollisionFilter,
-    ConstraintId, ContactMaterial, PersistentConstraint, Pose, QualityPolicy, SolverConfig,
-    SolverWorld, StepOptions, Velocity,
+    BodyId, BodyInit, BodyLookup, BoneBodyDesc, Capsule, CapsuleColliderDesc, ChainDesc,
+    ColliderId, CollisionFilter, ConstraintId, ContactMaterial, CrossLinkLatticeSpec,
+    CurveInterpolation, CurvePoint, ParameterCurve, PersistentConstraint, Pose, QualityPolicy,
+    SolverConfig, SolverWorld, StepOptions, Velocity, build_cross_link_lattice,
 };
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use glam::{Quat, Vec3};
@@ -85,39 +86,50 @@ fn skirt_12x8() -> SolverWorld {
     const ROWS: u32 = 8;
     let mut bodies = Vec::with_capacity((CHAINS * ROWS) as usize);
     let mut constraints = Vec::new();
+    let mut chains = Vec::new();
 
     for chain in 0..CHAINS {
         let angle = chain as f32 * core::f32::consts::TAU / CHAINS as f32;
         let radial = Vec3::new(angle.cos(), 0.0, angle.sin()) * 0.75;
+        let mut chain_bodies = Vec::new();
         for row in 0..ROWS {
             let id = 1 + chain * ROWS + row;
+            chain_bodies.push(BodyId::new(id));
             bodies.push(body(id, radial - Vec3::Y * (row as f32) * LENGTH, row != 0));
             if row > 0 {
                 constraints.push(anchor(1000 + id, id - 1, id));
             }
         }
+        chains.push(ChainDesc {
+            bodies: chain_bodies,
+            rest_lengths: vec![LENGTH; ROWS as usize],
+            closed: false,
+        });
     }
 
-    let ring_rest_length = 2.0 * 0.75 * (core::f32::consts::PI / CHAINS as f32).sin();
-    let mut constraint_id = 10_000;
-    for row in 1..ROWS {
-        for chain in 0..CHAINS {
-            let next = (chain + 1) % CHAINS;
-            let body_a = 1 + chain * ROWS + row;
-            let body_b = 1 + next * ROWS + row;
-            constraints.push(PersistentConstraint::distance(
-                ConstraintId::new(constraint_id),
-                BodyId::new(body_a),
-                BodyId::new(body_b),
-                Vec3::ZERO,
-                Vec3::ZERO,
-                ring_rest_length,
-                1.0e-5,
-                0.05,
-            ));
-            constraint_id += 1;
-        }
-    }
+    let lookup =
+        BodyLookup::try_new(bodies.iter().map(|init| init.desc.clone()).collect()).unwrap();
+    let compliance_curve = ParameterCurve::try_new(
+        vec![CurvePoint::new(0.0, 1.0e-5, 0.0)],
+        CurveInterpolation::Constant,
+    )
+    .unwrap();
+    constraints.extend(
+        build_cross_link_lattice(
+            &CrossLinkLatticeSpec {
+                first_constraint_id: ConstraintId::new(10_000),
+                chains,
+                samples: (0..ROWS)
+                    .map(|row| row as f32 / (ROWS - 1) as f32)
+                    .collect(),
+                diagonals: true,
+                closed: true,
+                compliance_curve,
+            },
+            &lookup,
+        )
+        .unwrap(),
+    );
 
     let mut world = world(bodies);
     world.set_constraints(constraints).unwrap();

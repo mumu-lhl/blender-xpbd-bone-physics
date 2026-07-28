@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use bone_physics_core::{
-    BodyId, BodyInit, BoneBodyDesc, Capsule, CapsuleColliderDesc, ColliderId, CollisionFilter,
-    ConstraintId, ContactMaterial, PersistentConstraint, Pose, QualityPolicy, SolverConfig,
-    SolverWorld, StepDiagnostics, StepOptions, Velocity,
+    BodyId, BodyInit, BodyLookup, BoneBodyDesc, Capsule, CapsuleColliderDesc, ChainDesc,
+    ColliderId, CollisionFilter, ConstraintId, ContactMaterial, CrossLinkLatticeSpec,
+    CurveInterpolation, CurvePoint, ParameterCurve, PersistentConstraint, Pose, QualityPolicy,
+    SolverConfig, SolverWorld, StepDiagnostics, StepOptions, Velocity, build_cross_link_lattice,
 };
 use glam::{Quat, Vec3};
 
@@ -16,12 +17,14 @@ const BODY_LENGTH: f32 = 0.5;
 const COLLIDER_RADIUS: f32 = 0.12;
 const HARD_ANCHOR_TOLERANCE: f32 = 5.0e-5;
 const PENETRATION_TOLERANCE: f32 = 0.01 * COLLIDER_RADIUS;
+const COMPLIANT_JOINT_STABILITY_TOLERANCE: f32 = 0.25;
 
 #[derive(Clone, Debug, PartialEq)]
 struct ReferenceResult {
     scene: &'static str,
     max_bone_length_error: f32,
     max_joint_separation: f32,
+    max_hard_anchor_separation: f32,
     max_residual_penetration: f32,
     peak_velocity: f32,
     peak_angular_velocity: f32,
@@ -95,11 +98,13 @@ fn simulate(
     scene: &'static str,
     mut world: SolverWorld,
     body_ids: &[u32],
+    constraint_ids: &[u32],
     hard_constraints: &[u32],
 ) -> ReferenceResult {
     let started = Instant::now();
     let mut max_bone_length_error: f32 = 0.0;
     let mut max_joint_separation: f32 = 0.0;
+    let mut max_hard_anchor_separation: f32 = 0.0;
     let mut max_residual_penetration: f32 = 0.0;
     let mut peak_velocity: f32 = 0.0;
     let mut peak_angular_velocity: f32 = 0.0;
@@ -116,15 +121,23 @@ fn simulate(
             &mut active_contacts,
         );
 
-        for constraint in hard_constraints {
-            let error = world.anchor_error(ConstraintId::new(*constraint)).unwrap();
-            max_bone_length_error = max_bone_length_error.max(error);
-            max_joint_separation = max_joint_separation.max(error);
-        }
         for id in body_ids {
             let state = world.body(BodyId::new(*id)).unwrap();
+            let head =
+                state.pose.translation + state.pose.rotation * Vec3::Y * (-0.5 * BODY_LENGTH);
+            let tail = state.pose.translation + state.pose.rotation * Vec3::Y * (0.5 * BODY_LENGTH);
+            max_bone_length_error =
+                max_bone_length_error.max((head.distance(tail) - BODY_LENGTH).abs());
             peak_velocity = peak_velocity.max(state.velocity.linear.length());
             peak_angular_velocity = peak_angular_velocity.max(state.velocity.angular.length());
+        }
+        for constraint in constraint_ids {
+            let error = world.anchor_error(ConstraintId::new(*constraint)).unwrap();
+            max_joint_separation = max_joint_separation.max(error);
+        }
+        for constraint in hard_constraints {
+            let error = world.anchor_error(ConstraintId::new(*constraint)).unwrap();
+            max_hard_anchor_separation = max_hard_anchor_separation.max(error);
         }
     }
 
@@ -136,6 +149,7 @@ fn simulate(
         scene,
         max_bone_length_error,
         max_joint_separation,
+        max_hard_anchor_separation,
         max_residual_penetration,
         peak_velocity,
         peak_angular_velocity,
@@ -172,7 +186,7 @@ fn pendulum() -> ReferenceResult {
     )
     .unwrap();
     world.set_constraints(vec![anchor(1, 1, 2, 0.0)]).unwrap();
-    simulate("single_pendulum", world, &[1, 2], &[1])
+    simulate("single_pendulum", world, &[1, 2], &[1], &[1])
 }
 
 fn colliding_hair_chains() -> ReferenceResult {
@@ -212,7 +226,13 @@ fn colliding_hair_chains() -> ReferenceResult {
     .unwrap();
     world.set_constraints(constraints).unwrap();
     world.set_colliders(colliders).unwrap();
-    simulate("colliding_hair_chains", world, &body_ids, &hard_constraints)
+    simulate(
+        "colliding_hair_chains",
+        world,
+        &body_ids,
+        &hard_constraints,
+        &hard_constraints,
+    )
 }
 
 fn root_stiff_tip_soft_tail() -> ReferenceResult {
@@ -250,7 +270,14 @@ fn root_stiff_tip_soft_tail() -> ReferenceResult {
     )
     .unwrap();
     world.set_constraints(constraints).unwrap();
-    simulate("root_stiff_tip_soft_tail", world, &body_ids, &[2001])
+    let constraint_ids = (2001..=2005).collect::<Vec<_>>();
+    simulate(
+        "root_stiff_tip_soft_tail",
+        world,
+        &body_ids,
+        &constraint_ids,
+        &[2001],
+    )
 }
 
 fn closed_skirt_lattice() -> ReferenceResult {
@@ -270,39 +297,50 @@ fn closed_skirt_lattice() -> ReferenceResult {
         let root = 50 + (index as u32) * 10;
         let tip = root + 1;
         bodies.push(body(root, corner, false, Vec3::ZERO));
-        bodies.push(body(tip, corner - Vec3::Y * BODY_LENGTH, true, Vec3::ZERO));
+        bodies.push(body(
+            tip,
+            corner - Vec3::Y * BODY_LENGTH,
+            true,
+            Vec3::new(-corner.z, 0.0, corner.x) * 0.75,
+        ));
         constraints.push(anchor(3000 + index as u32, root, tip, 0.0));
         colliders.push(collider(4000 + index as u32, tip));
         body_ids.extend([root, tip]);
         hard_constraints.push(3000 + index as u32);
     }
 
-    for index in 0..4_u32 {
-        let next = (index + 1) % 4;
-        let body_a = 51 + index * 10;
-        let body_b = 51 + next * 10;
-        constraints.push(PersistentConstraint::distance(
-            ConstraintId::new(3100 + index),
-            BodyId::new(body_a),
-            BodyId::new(body_b),
-            Vec3::ZERO,
-            Vec3::ZERO,
-            0.9,
-            2.0e-5,
-            0.05,
-        ));
-        let diagonal = (index + 2) % 4;
-        constraints.push(PersistentConstraint::distance(
-            ConstraintId::new(3200 + index),
-            BodyId::new(body_a),
-            BodyId::new(51 + diagonal * 10),
-            Vec3::ZERO,
-            Vec3::ZERO,
-            0.9 * 2.0_f32.sqrt(),
-            5.0e-5,
-            0.05,
-        ));
-    }
+    let body_lookup =
+        BodyLookup::try_new(bodies.iter().map(|init| init.desc.clone()).collect()).unwrap();
+    let chains = (0..4_u32)
+        .map(|index| ChainDesc {
+            bodies: vec![BodyId::new(50 + index * 10), BodyId::new(51 + index * 10)],
+            rest_lengths: vec![BODY_LENGTH, BODY_LENGTH],
+            closed: false,
+        })
+        .collect();
+    let compliance_curve = ParameterCurve::try_new(
+        vec![CurvePoint::new(0.0, 2.0e-5, 0.0)],
+        CurveInterpolation::Constant,
+    )
+    .unwrap();
+    constraints.extend(
+        build_cross_link_lattice(
+            &CrossLinkLatticeSpec {
+                first_constraint_id: ConstraintId::new(3100),
+                chains,
+                samples: vec![0.0, 0.5, 1.0],
+                diagonals: true,
+                closed: true,
+                compliance_curve,
+            },
+            &body_lookup,
+        )
+        .unwrap(),
+    );
+    let constraint_ids = constraints
+        .iter()
+        .map(|constraint| constraint.id.get())
+        .collect::<Vec<_>>();
 
     let mut world = SolverWorld::new(
         SolverConfig {
@@ -314,7 +352,13 @@ fn closed_skirt_lattice() -> ReferenceResult {
     .unwrap();
     world.set_constraints(constraints).unwrap();
     world.set_colliders(colliders).unwrap();
-    simulate("closed_skirt_lattice", world, &body_ids, &hard_constraints)
+    simulate(
+        "closed_skirt_lattice",
+        world,
+        &body_ids,
+        &constraint_ids,
+        &hard_constraints,
+    )
 }
 
 fn run_references() -> Vec<ReferenceResult> {
@@ -346,7 +390,8 @@ fn write_report(results: &[ReferenceResult]) -> PathBuf {
             json,
             concat!(
                 "  {{\"scene\":\"{}\",\"max_bone_length_error\":{},",
-                "\"max_joint_separation\":{},\"max_residual_penetration\":{},",
+                "\"max_joint_separation\":{},\"max_hard_anchor_separation\":{},",
+                "\"max_residual_penetration\":{},",
                 "\"peak_velocity\":{},\"peak_angular_velocity\":{},",
                 "\"generated_contacts\":{},\"active_contacts\":{},",
                 "\"phase_timings\":{{\"simulate_seconds\":{}}}}}{}"
@@ -354,6 +399,7 @@ fn write_report(results: &[ReferenceResult]) -> PathBuf {
             result.scene,
             result.max_bone_length_error,
             result.max_joint_separation,
+            result.max_hard_anchor_separation,
             result.max_residual_penetration,
             result.peak_velocity,
             result.peak_angular_velocity,
@@ -387,11 +433,25 @@ fn authoritative_reference_scenes_are_stable_and_within_tolerance() {
             left.scene
         );
         assert!(
-            left.max_joint_separation <= HARD_ANCHOR_TOLERANCE,
-            "{} joint separation {} exceeded {}",
+            left.max_bone_length_error <= 1.0e-5 * BODY_LENGTH,
+            "{} bone length error {} exceeded {}",
+            left.scene,
+            left.max_bone_length_error,
+            1.0e-5 * BODY_LENGTH,
+        );
+        assert!(
+            left.max_hard_anchor_separation <= HARD_ANCHOR_TOLERANCE,
+            "{} hard anchor separation {} exceeded {}",
+            left.scene,
+            left.max_hard_anchor_separation,
+            HARD_ANCHOR_TOLERANCE,
+        );
+        assert!(
+            left.max_joint_separation <= COMPLIANT_JOINT_STABILITY_TOLERANCE,
+            "{} compliant joint separation {} exceeded {}",
             left.scene,
             left.max_joint_separation,
-            HARD_ANCHOR_TOLERANCE,
+            COMPLIANT_JOINT_STABILITY_TOLERANCE,
         );
         assert!(
             left.max_residual_penetration <= PENETRATION_TOLERANCE,
