@@ -1,13 +1,13 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use bone_physics_core::{
     BodyId, BodyInit, BodyLookup, BoneBodyDesc, Capsule, CapsuleColliderDesc, ChainDesc,
     ColliderId, CollisionFilter, ConstraintId, ContactMaterial, CrossLinkLatticeSpec,
     CurveInterpolation, CurvePoint, ParameterCurve, PersistentConstraint, Pose, QualityPolicy,
-    SolverConfig, SolverWorld, StepDiagnostics, StepOptions, Velocity, build_cross_link_lattice,
+    SolverConfig, SolverWorld, StepDiagnostics, StepOptions, StepPhaseTimings, Velocity,
+    build_cross_link_lattice,
 };
 use glam::{Quat, Vec3};
 
@@ -31,7 +31,7 @@ struct ReferenceResult {
     generated_contacts: u64,
     active_contacts: u64,
     final_poses: Vec<Pose>,
-    simulate_seconds: f64,
+    phase_timings: StepPhaseTimings,
 }
 
 fn body(id: u32, translation: Vec3, dynamic: bool, velocity: Vec3) -> BodyInit {
@@ -101,7 +101,6 @@ fn simulate(
     constraint_ids: &[u32],
     hard_constraints: &[u32],
 ) -> ReferenceResult {
-    let started = Instant::now();
     let mut max_bone_length_error: f32 = 0.0;
     let mut max_joint_separation: f32 = 0.0;
     let mut max_hard_anchor_separation: f32 = 0.0;
@@ -110,9 +109,12 @@ fn simulate(
     let mut peak_angular_velocity: f32 = 0.0;
     let mut generated_contacts = 0_u64;
     let mut active_contacts = 0_u64;
+    let mut phase_timings = StepPhaseTimings::default();
 
-    for _ in 0..STEPS {
-        let diagnostics = world.substep(DT, 1.0, options()).unwrap();
+    for step in 0..STEPS {
+        write_replay_checkpoint(scene, step);
+        let (diagnostics, step_timings) = world.substep_profiled(DT, 1.0, options()).unwrap();
+        accumulate_timings(&mut phase_timings, step_timings);
         assert!(!diagnostics.rolled_back, "{scene} rolled back");
         accumulate_diagnostics(
             diagnostics,
@@ -156,8 +158,17 @@ fn simulate(
         generated_contacts,
         active_contacts,
         final_poses,
-        simulate_seconds: started.elapsed().as_secs_f64(),
+        phase_timings,
     }
+}
+
+fn accumulate_timings(total: &mut StepPhaseTimings, step: StepPhaseTimings) {
+    total.prediction_seconds += step.prediction_seconds;
+    total.animation_inertia_seconds += step.animation_inertia_seconds;
+    total.contact_generation_seconds += step.contact_generation_seconds;
+    total.position_solve_seconds += step.position_solve_seconds;
+    total.diagnostics_seconds += step.diagnostics_seconds;
+    total.velocity_seconds += step.velocity_seconds;
 }
 
 fn accumulate_diagnostics(
@@ -382,8 +393,28 @@ fn report_path() -> PathBuf {
     )
 }
 
+fn write_replay_checkpoint(scene: &str, next_step: usize) {
+    let Some(report_path) = std::env::var_os("BONE_PHYSICS_REFERENCE_OUTPUT") else {
+        return;
+    };
+    let report_path = PathBuf::from(report_path);
+    let path = report_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("rust-reference-replay.json");
+    let checkpoint = format!(
+        concat!(
+            "{{\"fixture_version\":1,\"scene\":\"{}\",\"next_step\":{},",
+            "\"fixed_dt\":{},\"target_alpha\":1.0,",
+            "\"position_iterations\":64,\"contact_iterations\":64}}\n"
+        ),
+        scene, next_step, DT,
+    );
+    fs::write(path, checkpoint).unwrap();
+}
+
 fn write_report(results: &[ReferenceResult]) -> PathBuf {
-    let mut json = String::from("[\n");
+    let mut json = String::from("{\"status\":\"passed\",\"scenes\":[\n");
     for (index, result) in results.iter().enumerate() {
         let comma = if index + 1 == results.len() { "" } else { "," };
         writeln!(
@@ -394,7 +425,10 @@ fn write_report(results: &[ReferenceResult]) -> PathBuf {
                 "\"max_residual_penetration\":{},",
                 "\"peak_velocity\":{},\"peak_angular_velocity\":{},",
                 "\"generated_contacts\":{},\"active_contacts\":{},",
-                "\"phase_timings\":{{\"simulate_seconds\":{}}}}}{}"
+                "\"phase_timings\":{{\"prediction_seconds\":{},",
+                "\"animation_inertia_seconds\":{},\"contact_generation_seconds\":{},",
+                "\"position_solve_seconds\":{},\"diagnostics_seconds\":{},",
+                "\"velocity_seconds\":{}}}}}{}"
             ),
             result.scene,
             result.max_bone_length_error,
@@ -405,12 +439,20 @@ fn write_report(results: &[ReferenceResult]) -> PathBuf {
             result.peak_angular_velocity,
             result.generated_contacts,
             result.active_contacts,
-            result.simulate_seconds,
+            result.phase_timings.prediction_seconds,
+            result.phase_timings.animation_inertia_seconds,
+            result.phase_timings.contact_generation_seconds,
+            result.phase_timings.position_solve_seconds,
+            result.phase_timings.diagnostics_seconds,
+            result.phase_timings.velocity_seconds,
             comma,
         )
         .unwrap();
     }
-    json.push_str("]\n");
+    json.push_str(
+        "],\"failure\":null,\"replay\":{\"fixture_version\":1,\
+         \"fixed_dt\":0.008333334,\"steps\":240}}\n",
+    );
 
     let path = report_path();
     if let Some(parent) = path.parent() {

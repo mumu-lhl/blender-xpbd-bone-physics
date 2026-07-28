@@ -1,4 +1,5 @@
 use glam::{Mat3, Quat, Vec3};
+use std::time::Instant;
 
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
@@ -100,6 +101,16 @@ pub struct StepDiagnostics {
     pub max_constraint_error: f32,
     pub position_iterations: u32,
     pub rolled_back: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StepPhaseTimings {
+    pub prediction_seconds: f64,
+    pub animation_inertia_seconds: f64,
+    pub contact_generation_seconds: f64,
+    pub position_solve_seconds: f64,
+    pub diagnostics_seconds: f64,
+    pub velocity_seconds: f64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -310,6 +321,27 @@ impl SolverWorld {
         target_alpha: f32,
         options: StepOptions,
     ) -> Result<StepDiagnostics, SolverError> {
+        self.substep_internal(dt, target_alpha, options, None)
+    }
+
+    pub fn substep_profiled(
+        &mut self,
+        dt: f32,
+        target_alpha: f32,
+        options: StepOptions,
+    ) -> Result<(StepDiagnostics, StepPhaseTimings), SolverError> {
+        let mut timings = StepPhaseTimings::default();
+        let diagnostics = self.substep_internal(dt, target_alpha, options, Some(&mut timings))?;
+        Ok((diagnostics, timings))
+    }
+
+    fn substep_internal(
+        &mut self,
+        dt: f32,
+        target_alpha: f32,
+        options: StepOptions,
+        mut timings: Option<&mut StepPhaseTimings>,
+    ) -> Result<StepDiagnostics, SolverError> {
         if self.paused {
             return Err(SolverError::WorldPaused);
         }
@@ -321,7 +353,7 @@ impl SolverWorld {
 
         let snapshot = self.dynamic_snapshot();
         self.failure_hint = None;
-        let result = self.run_substep(dt, target_alpha, options);
+        let result = self.run_substep(dt, target_alpha, options, &mut timings);
         let source = result.as_ref().err().cloned();
         let failure = self
             .detect_step_failure()
@@ -358,11 +390,30 @@ impl SolverWorld {
         dt: f32,
         target_alpha: f32,
         options: StepOptions,
+        timings: &mut Option<&mut StepPhaseTimings>,
     ) -> Result<StepDiagnostics, SolverError> {
-        self.predict(dt)?;
-        self.apply_animation_inertia(target_alpha)?;
-        let generated_contacts = self.generate_contacts()?;
+        let started = timings.is_some().then(Instant::now);
+        let prediction_result = self.predict(dt);
+        record_phase(timings, started, |value, elapsed| {
+            value.prediction_seconds += elapsed;
+        });
+        prediction_result?;
 
+        let started = timings.is_some().then(Instant::now);
+        let animation_result = self.apply_animation_inertia(target_alpha);
+        record_phase(timings, started, |value, elapsed| {
+            value.animation_inertia_seconds += elapsed;
+        });
+        animation_result?;
+
+        let started = timings.is_some().then(Instant::now);
+        let contact_result = self.generate_contacts();
+        record_phase(timings, started, |value, elapsed| {
+            value.contact_generation_seconds += elapsed;
+        });
+        let generated_contacts = contact_result?;
+
+        let started = timings.is_some().then(Instant::now);
         let schedule = self.constraint_schedule.clone();
         let colliders = self.colliders.clone();
         let mut constraints = core::mem::take(&mut self.constraints);
@@ -389,12 +440,30 @@ impl SolverWorld {
         })();
         self.constraints = constraints;
         self.cached_contacts = contacts;
+        record_phase(timings, started, |value, elapsed| {
+            value.position_solve_seconds += elapsed;
+        });
         solve_result?;
 
-        let max_constraint_error = self.max_constraint_error()?;
-        let (active_contacts, deepest_penetration) = self.contact_residuals()?;
-        self.rebuild_velocities(dt)?;
+        let started = timings.is_some().then(Instant::now);
+        let diagnostics_result = (|| {
+            let max_constraint_error = self.max_constraint_error()?;
+            let (active_contacts, deepest_penetration) = self.contact_residuals()?;
+            Ok::<_, SolverError>((max_constraint_error, active_contacts, deepest_penetration))
+        })();
+        record_phase(timings, started, |value, elapsed| {
+            value.diagnostics_seconds += elapsed;
+        });
+        let (max_constraint_error, active_contacts, deepest_penetration) = diagnostics_result?;
 
+        let started = timings.is_some().then(Instant::now);
+        let rebuild_result = self.rebuild_velocities(dt);
+        if let Err(error) = rebuild_result {
+            record_phase(timings, started, |value, elapsed| {
+                value.velocity_seconds += elapsed;
+            });
+            return Err(error);
+        }
         let previous_target_alpha = self.target_alpha;
         let constraints = core::mem::take(&mut self.constraints);
         let damping_result = (|| {
@@ -423,6 +492,9 @@ impl SolverWorld {
         let mut contacts = core::mem::take(&mut self.cached_contacts);
         let velocity_result = self.apply_contact_velocity_response(&colliders, &mut contacts);
         self.cached_contacts = contacts;
+        record_phase(timings, started, |value, elapsed| {
+            value.velocity_seconds += elapsed;
+        });
         velocity_result?;
 
         self.target_alpha = target_alpha;
@@ -1662,6 +1734,16 @@ fn validate_dt(dt: f32) -> Result<(), SolverError> {
 
 fn max_abs_vec3(value: Vec3) -> f32 {
     value.x.abs().max(value.y.abs()).max(value.z.abs())
+}
+
+fn record_phase(
+    timings: &mut Option<&mut StepPhaseTimings>,
+    started: Option<Instant>,
+    update: impl FnOnce(&mut StepPhaseTimings, f64),
+) {
+    if let (Some(timings), Some(started)) = (timings.as_deref_mut(), started) {
+        update(timings, started.elapsed().as_secs_f64());
+    }
 }
 
 fn step_failure_error(failure: &StepFailure) -> SolverError {

@@ -1,6 +1,6 @@
 use bone_physics_core::{
     BodyId, BodyInit, BoneBodyDesc, CorrectionKind, FixedClock, Pose, QualityPolicy, SolverConfig,
-    SolverError, SolverWorld, Velocity,
+    SolverError, SolverWorld, StepOptions, Velocity,
 };
 use glam::{Quat, Vec3};
 
@@ -147,4 +147,33 @@ fn non_velocity_contact_correction_does_not_create_linear_velocity() {
     let state = world.body(BodyId::new(7)).unwrap();
     assert_eq!(state.pose.translation, Vec3::X);
     assert_eq!(state.velocity.linear, Vec3::ZERO);
+}
+
+#[test]
+fn profiled_substep_preserves_diagnostics_and_reports_every_phase() {
+    let mut ordinary = world(Vec3::Y * -9.81, Velocity::ZERO, 0.0, 0.0);
+    let mut profiled = world(Vec3::Y * -9.81, Velocity::ZERO, 0.0, 0.0);
+    let options = StepOptions {
+        position_iterations: 4,
+        contact_iterations: 4,
+        quality: QualityPolicy::AuthoritativeBake,
+    };
+
+    let expected = ordinary.substep(1.0 / 120.0, 1.0, options).unwrap();
+    let (actual, timings) = profiled
+        .substep_profiled(1.0 / 120.0, 1.0, options)
+        .unwrap();
+
+    assert_eq!(actual, expected);
+    for elapsed in [
+        timings.prediction_seconds,
+        timings.animation_inertia_seconds,
+        timings.contact_generation_seconds,
+        timings.position_solve_seconds,
+        timings.diagnostics_seconds,
+        timings.velocity_seconds,
+    ] {
+        assert!(elapsed.is_finite());
+        assert!(elapsed >= 0.0);
+    }
 }

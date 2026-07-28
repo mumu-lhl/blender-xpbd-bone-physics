@@ -42,5 +42,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-reference-report
-          path: artifacts/rust-reference-report.json
+          path: artifacts/rust-reference-*.json
           if-no-files-found: error

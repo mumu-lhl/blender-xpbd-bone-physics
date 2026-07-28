@@ -38,5 +38,5 @@ pub use pose::{Pose, QUATERNION_NORMALIZATION_TOLERANCE, Velocity};
 pub use time::{FixedClock, QualityPolicy, StepBatch};
 pub use world::{
     BodyInit, CorrectionKind, MAX_MULTIPLIER_MAGNITUDE, SolverConfig, SolverWorld, StepDiagnostics,
-    StepFailure, StepFailureKind, StepOptions,
+    StepFailure, StepFailureKind, StepOptions, StepPhaseTimings,
 };

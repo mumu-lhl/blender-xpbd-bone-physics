@@ -5,6 +5,7 @@ set -o pipefail
 
 report_dir="${1:-artifacts}"
 mkdir -p "$report_dir"
+report_dir="$(cd "$report_dir" && pwd)"
 status=0
 
 echo '$ cargo fmt --all --check' | tee "$report_dir/cargo-fmt.log"
@@ -14,6 +15,12 @@ echo '$ cargo clippy --workspace --all-targets -- -D warnings' \
   | tee "$report_dir/cargo-clippy.log"
 cargo clippy --workspace --all-targets -- -D warnings 2>&1 \
   | tee -a "$report_dir/cargo-clippy.log" || status=1
+
+echo '$ python3 scripts/ci/reference_report.py --initialize <report>' \
+  | tee "$report_dir/reference-report-init.log"
+python3 scripts/ci/reference_report.py \
+  --initialize "$report_dir/rust-reference-report.json" 2>&1 \
+  | tee -a "$report_dir/reference-report-init.log" || status=1
 
 echo '$ cargo test --workspace --all-targets' \
   | tee "$report_dir/cargo-test.log"
