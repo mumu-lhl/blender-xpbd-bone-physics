@@ -8,26 +8,23 @@
 
 **Tech Stack:** Rust stable, glam, parry3d through an internal adapter, proptest, criterion.
 
-## Handoff Status — 2026-07-26
+## Handoff Status — 2026-07-28
 
 - Task 1: complete.
 - Task 2: complete.
-- Task 3: implementation complete except the contact-driven limited-joint
-  regression, which is intentionally deferred until Task 7 supplies real
-  contacts.
+- Task 3: complete, including the contact-driven limited-joint regression.
 - Task 4: complete; four Important review findings were fixed and the focused
   re-review passed.
 - Task 5: complete; focused review passed.
-- Task 6: capsule narrow phase, filtering, and both swept broad-phase backends
-  are implemented; final focused review is pending.
-- Task 7: not started.
-- Task 8: not started.
-- Before further physics work, perform the standalone Rust/dependency migration
-  specified in `docs/HANDOFF.md`.
+- Task 6: complete; focused review passed.
+- Task 7: complete; rollback follow-up review passed.
+- Task 8: complete; final independent review passed with no remaining
+  Critical/Important findings.
+- The standalone Rust/dependency migration in `docs/HANDOFF.md` is complete.
 
-The last verified pre-handoff code baseline is remote commit
-`e8c037a195c684adf4ed9341047bad6a2bd7fd47`: CI run `30210746067`
-passed formatting, Clippy with warnings denied, and all 72 tests.
+The final code baseline is remote commit
+`afb0519810b993f99e7b9d806a1758ee98fad1a3`. Exact CI and artifact evidence is
+recorded in `docs/HANDOFF.md`.
 
 ## Global Constraints
 
@@ -377,7 +374,7 @@ git add crates/bone_physics_core
 git commit -m "feat: add deterministic constraint scheduling"
 ```
 
-### Task 6: Capsule broad phase, filtering, and robust manifolds — Implemented; final review pending
+### Task 6: Capsule broad phase, filtering, and robust manifolds — Complete
 
 **Files:**
 - Create: `crates/bone_physics_core/src/collision/mod.rs`
@@ -438,7 +435,7 @@ git add crates/bone_physics_core
 git commit -m "feat: detect robust capsule contacts"
 ```
 
-### Task 7: Contact constraints, friction, restitution, and analytic proxies — Not started
+### Task 7: Contact constraints, friction, restitution, and analytic proxies — Complete
 
 **Files:**
 - Create: `crates/bone_physics_core/src/collision/contact.rs`
@@ -456,38 +453,38 @@ git commit -m "feat: detect robust capsule contacts"
 - Produces: `ContactMaterial { friction, restitution }`.
 - Produces: `StepDiagnostics { generated_contacts, active_contacts, deepest_penetration, max_constraint_error, rolled_back }`.
 
-- [ ] **Step 1: Write failing contact-response tests**
+- [x] **Step 1: Write failing contact-response tests**
 
 Test zero-restitution resting contact for 10 seconds, moving-surface friction,
 one new impact with restitution, no restitution on persistent resting contact,
 and non-attractive normal multipliers.
 
-- [ ] **Step 2: Write failing analytic-shape tests**
+- [x] **Step 2: Write failing analytic-shape tests**
 
 Test capsule versus sphere/capsule/rounded box, transforms with baked
 nonuniform scale, a fast moving proxy using speculative separation, and an
 initially embedded root with collision disabled.
 
-- [ ] **Step 3: Implement contact lifecycle**
+- [x] **Step 3: Implement contact lifecycle**
 
 Generate and warm-start contacts before the main iterations. Solve unilateral
 normal position rows in the contact class. Record depenetration translation and
 rotation separately, subtract it during velocity reconstruction, then solve
 surface-relative friction and new-impact restitution in the velocity phase.
 
-- [ ] **Step 4: Add rollback and diagnostics**
+- [x] **Step 4: Add rollback and diagnostics**
 
 Snapshot the last valid dynamic state at substep entry. On non-finite pose,
 unnormalized quaternion, excessive multiplier, or solver error, restore the
 snapshot, pause the world, and report the offending stable IDs.
 
-- [ ] **Step 5: Run reference simulations**
+- [x] **Step 5: Run reference simulations**
 
 Add deterministic single pendulum, colliding hair chains, root-stiff/tip-soft
 tail, and closed skirt lattice fixtures. Write numerical summaries under the
 test temporary directory and assert the specification tolerances.
 
-- [ ] **Step 6: Run and commit**
+- [x] **Step 6: Run and commit**
 
 Run:
 
@@ -505,7 +502,7 @@ git add crates/bone_physics_core
 git commit -m "feat: solve primitive collision contacts"
 ```
 
-### Task 8: Benchmarks and CI artifact expansion — Not started
+### Task 8: Benchmarks and CI artifact expansion — Complete
 
 **Files:**
 - Modify: `crates/bone_physics_core/Cargo.toml`
@@ -517,24 +514,24 @@ git commit -m "feat: solve primitive collision contacts"
 - Produces: benchmark groups `hair_64`, `skirt_12x8`, and `contacts_256`.
 - Produces: `rust-reference-report` containing JSON numerical diagnostics.
 
-- [ ] **Step 1: Add deterministic benchmark fixtures**
+- [x] **Step 1: Add deterministic benchmark fixtures**
 
 Criterion measurements must build the same stable graph on every invocation
 and use a fixed input animation.
 
-- [ ] **Step 2: Extend CI**
+- [x] **Step 2: Extend CI**
 
 Run reference tests on pull requests and `cargo bench --no-run`. Run measured
 benchmarks only on the scheduled workflow. Upload command output and numerical
 JSON with `if: always()`.
 
-- [ ] **Step 3: Verify CI artifacts**
+- [x] **Step 3: Verify CI artifacts**
 
 Expected artifacts contain nonempty test output plus one JSON row per reference
 scene with length error, joint error, penetration, peak velocities, contact
 counts, and phase timings.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add crates/bone_physics_core .github/workflows/ci.yml scripts/ci
