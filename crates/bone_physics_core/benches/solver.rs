@@ -1,8 +1,8 @@
 use std::hint::black_box;
 
 use bone_physics_core::{
-    BodyId, BodyInit, BodyLookup, BoneBodyDesc, Capsule, CapsuleColliderDesc, ChainDesc,
-    ColliderId, CollisionFilter, ConstraintId, ContactMaterial, CrossLinkLatticeSpec,
+    AnimationTarget, BodyId, BodyInit, BodyLookup, BoneBodyDesc, Capsule, CapsuleColliderDesc,
+    ChainDesc, ColliderId, CollisionFilter, ConstraintId, ContactMaterial, CrossLinkLatticeSpec,
     CurveInterpolation, CurvePoint, ParameterCurve, PersistentConstraint, Pose, QualityPolicy,
     SolverConfig, SolverWorld, StepOptions, Velocity, build_cross_link_lattice,
 };
@@ -64,6 +64,32 @@ fn world(bodies: Vec<BodyInit>) -> SolverWorld {
     .unwrap()
 }
 
+fn install_fixed_animation(world: &mut SolverWorld, body_ids: impl IntoIterator<Item = u32>) {
+    let targets = body_ids
+        .into_iter()
+        .map(|raw_id| {
+            let id = BodyId::new(raw_id);
+            let previous = world.body(id).unwrap().pose;
+            let phase = (raw_id % 7) as f32 - 3.0;
+            let current = Pose::try_new(
+                previous.translation + Vec3::new(0.01 * phase, 0.0, -0.005 * phase),
+                Quat::from_rotation_z(0.02 * phase) * previous.rotation,
+            )
+            .unwrap();
+            (
+                id,
+                AnimationTarget {
+                    previous,
+                    current,
+                    translation_inertia: 1.0,
+                    rotation_inertia: 1.0,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    world.set_animation_targets(&targets).unwrap();
+}
+
 fn hair_64() -> SolverWorld {
     let mut bodies = vec![body(1, Vec3::ZERO, false)];
     let mut constraints = Vec::with_capacity(64);
@@ -78,6 +104,7 @@ fn hair_64() -> SolverWorld {
     }
     let mut world = world(bodies);
     world.set_constraints(constraints).unwrap();
+    install_fixed_animation(&mut world, 1..=65);
     world
 }
 
@@ -133,6 +160,7 @@ fn skirt_12x8() -> SolverWorld {
 
     let mut world = world(bodies);
     world.set_constraints(constraints).unwrap();
+    install_fixed_animation(&mut world, 1..=(CHAINS * ROWS));
     world
 }
 
@@ -170,12 +198,18 @@ fn contacts_256() -> SolverWorld {
 
     let mut world = world(bodies);
     world.set_colliders(colliders).unwrap();
+    install_fixed_animation(&mut world, 1..=257);
     world
 }
 
 fn run_steps(mut world: SolverWorld, iterations: u32) -> SolverWorld {
-    for _ in 0..10 {
-        black_box(world.substep(DT, 1.0, options(iterations)).unwrap());
+    for step in 1..=10 {
+        let target_alpha = step as f32 / 10.0;
+        black_box(
+            world
+                .substep(DT, target_alpha, options(iterations))
+                .unwrap(),
+        );
     }
     world
 }
