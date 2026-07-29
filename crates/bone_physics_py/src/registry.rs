@@ -38,23 +38,23 @@ pub enum RegistryError {
     CapacityExhausted,
 }
 
-struct Slot {
+struct Slot<T> {
     generation: u32,
     reusable: bool,
-    world: Option<SolverWorld>,
+    world: Option<T>,
 }
 
-pub struct WorldRegistry {
-    slots: Vec<Slot>,
+pub struct WorldRegistry<T = SolverWorld> {
+    slots: Vec<Slot<T>>,
 }
 
-impl WorldRegistry {
+impl<T> WorldRegistry<T> {
     #[must_use]
     pub const fn new() -> Self {
         Self { slots: Vec::new() }
     }
 
-    pub fn insert(&mut self, world: SolverWorld) -> Result<WorldHandle, RegistryError> {
+    pub fn insert(&mut self, world: T) -> Result<WorldHandle, RegistryError> {
         if let Some((index, slot)) = self
             .slots
             .iter_mut()
@@ -78,7 +78,7 @@ impl WorldRegistry {
         Ok(WorldHandle::from_parts(index, FIRST_GENERATION))
     }
 
-    pub fn remove(&mut self, handle: WorldHandle) -> Result<SolverWorld, RegistryError> {
+    pub fn remove(&mut self, handle: WorldHandle) -> Result<T, RegistryError> {
         let slot = self.live_slot_mut(handle)?;
         let next_generation = slot.generation.checked_add(1);
         let world = slot
@@ -93,11 +93,11 @@ impl WorldRegistry {
         Ok(world)
     }
 
-    pub fn with_world_mut<T>(
+    pub fn with_world_mut<U>(
         &mut self,
         handle: WorldHandle,
-        operation: impl FnOnce(&mut SolverWorld) -> T,
-    ) -> Result<T, RegistryError> {
+        operation: impl FnOnce(&mut T) -> U,
+    ) -> Result<U, RegistryError> {
         let slot = self.live_slot_mut(handle)?;
         let world = slot
             .world
@@ -106,7 +106,7 @@ impl WorldRegistry {
         Ok(operation(world))
     }
 
-    fn live_slot_mut(&mut self, handle: WorldHandle) -> Result<&mut Slot, RegistryError> {
+    fn live_slot_mut(&mut self, handle: WorldHandle) -> Result<&mut Slot<T>, RegistryError> {
         let slot = self
             .slots
             .get_mut(handle.slot() as usize)
@@ -118,7 +118,7 @@ impl WorldRegistry {
     }
 }
 
-impl Default for WorldRegistry {
+impl<T> Default for WorldRegistry<T> {
     fn default() -> Self {
         Self::new()
     }
