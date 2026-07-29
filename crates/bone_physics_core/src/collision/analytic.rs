@@ -63,7 +63,7 @@ pub struct AnalyticProxy {
 }
 
 impl AnalyticProxy {
-    fn validate(self) -> Result<(), SolverError> {
+    pub(crate) fn validate(self) -> Result<(), SolverError> {
         self.pose.validate()?;
         validate_vec3("analytic_proxy_linear_velocity", self.linear_velocity)?;
         self.shape.validate()

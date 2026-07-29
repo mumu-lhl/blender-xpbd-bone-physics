@@ -20,7 +20,6 @@ pub struct NativeWorld {
     clock: FixedClock,
     body_ids: Vec<BodyId>,
     body_collider_ids: Vec<ColliderId>,
-    analytic_colliders: Vec<AnalyticProxy>,
     last_summary: AdvanceSummary,
 }
 
@@ -39,7 +38,6 @@ impl NativeWorld {
             clock,
             body_ids,
             body_collider_ids,
-            analytic_colliders: Vec::new(),
             last_summary: AdvanceSummary::default(),
         })
     }
@@ -97,8 +95,7 @@ impl NativeWorld {
                 id: collider.id.get(),
             });
         }
-        self.analytic_colliders = colliders;
-        Ok(())
+        self.solver.set_analytic_proxies(colliders)
     }
 
     #[must_use]
@@ -120,7 +117,7 @@ impl NativeWorld {
 
     #[must_use]
     pub fn analytic_collider_count(&self) -> usize {
-        self.analytic_colliders.len()
+        self.solver.analytic_proxy_count()
     }
 
     #[must_use]

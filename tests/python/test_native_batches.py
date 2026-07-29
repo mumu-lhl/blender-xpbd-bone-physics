@@ -292,6 +292,32 @@ class NativeBatchTests(unittest.TestCase):
         with self.assertRaisesRegex(native.BonePhysicsInputError, "duplicate collider ID 101"):
             native.set_analytic_colliders(handle, batch)
 
+    def test_analytic_collider_participates_in_contact_solve(self):
+        row = body_row(0.0)
+        row[20] = 0.0
+        handle = self.build(body_batch=bodies([row]), filter_batch=filters(1))
+        values = [0.0] * 17
+        values[0] = 0.3
+        values[6] = 1.0
+        values[10] = 0.3
+        native.set_analytic_colliders(
+            handle,
+            {
+                "ids": array("I", [301]),
+                "kinds": array("I", [0]),
+                "enabled": array("I", [1]),
+                "values": array("f", values),
+                "columns": 17,
+            },
+        )
+
+        summary = native.advance(handle, 1.0 / 120.0, "deterministic_preview")
+        output = array("f", [0.0] * 7)
+        native.read_transforms(handle, output)
+
+        self.assertGreater(summary["generated_contacts"], 0)
+        self.assertLess(output[0], -0.05)
+
     def test_transform_output_rejects_wrong_dtype_and_noncontiguous_storage(self):
         handle = self.build()
 
