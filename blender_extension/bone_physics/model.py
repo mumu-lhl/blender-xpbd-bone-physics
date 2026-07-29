@@ -282,11 +282,70 @@ class AnalyticColliderSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class CollisionSurfaceSpec:
+    id: int
+    object_name: str
+    default_region_id: int = 1
+    region_attribute: str = "bone_physics_region"
+    excluded_materials: tuple[str, ...] = ()
+    excluded_region_ids: tuple[int, ...] = ()
+    body_region_ignores: tuple[tuple[int, tuple[int, ...]], ...] = ()
+    upstream_weight_merges: tuple[tuple[str, str], ...] = ()
+    thickness: float = 0.0
+    simplify_max_error: float = 0.0
+    closed_hint: bool = False
+
+    def __post_init__(self) -> None:
+        _id("collision mesh", self.id)
+        if not self.object_name:
+            raise ValueError("collision surface object name must not be empty")
+        _id("default region", self.default_region_id)
+        if not self.region_attribute:
+            raise ValueError("collision region attribute must not be empty")
+        excluded_materials = tuple(self.excluded_materials)
+        if any(not material for material in excluded_materials):
+            raise ValueError("excluded material names must not be empty")
+        if len(set(excluded_materials)) != len(excluded_materials):
+            raise ValueError("duplicate excluded material")
+        object.__setattr__(self, "excluded_materials", excluded_materials)
+        object.__setattr__(
+            self,
+            "excluded_region_ids",
+            _id_tuple("excluded region", self.excluded_region_ids),
+        )
+
+        ignores = tuple(
+            (body_id, _id_tuple("ignored region", regions))
+            for body_id, regions in self.body_region_ignores
+        )
+        body_ids = tuple(body_id for body_id, _regions in ignores)
+        for body_id in body_ids:
+            _id("ignored body", body_id)
+        if len(set(body_ids)) != len(body_ids):
+            raise ValueError("duplicate body-region ignore")
+        object.__setattr__(self, "body_region_ignores", ignores)
+
+        merges = tuple(tuple(pair) for pair in self.upstream_weight_merges)
+        if any(
+            len(pair) != 2 or not pair[0] or not pair[1] or pair[0] == pair[1]
+            for pair in merges
+        ):
+            raise ValueError("upstream weight merges require distinct nonempty bone names")
+        physical = tuple(pair[0] for pair in merges)
+        if len(set(physical)) != len(physical):
+            raise ValueError("duplicate physical weight merge")
+        object.__setattr__(self, "upstream_weight_merges", merges)
+        _nonnegative("collision thickness", self.thickness)
+        _nonnegative("simplification maximum error", self.simplify_max_error)
+
+
+@dataclass(frozen=True, slots=True)
 class WorldSpec:
     bones: tuple[BoneSpec, ...]
     chains: tuple[ChainSpec, ...] = ()
     cross_links: tuple[CrossLinkSpec, ...] = ()
     analytic_colliders: tuple[AnalyticColliderSpec, ...] = ()
+    collision_surfaces: tuple[CollisionSurfaceSpec, ...] = ()
     gravity: Vec3 = (0.0, -9.81, 0.0)
     fixed_dt: float = 1.0 / 120.0
     api_version: int = 1
@@ -296,6 +355,7 @@ class WorldSpec:
         object.__setattr__(self, "chains", tuple(self.chains))
         object.__setattr__(self, "cross_links", tuple(self.cross_links))
         object.__setattr__(self, "analytic_colliders", tuple(self.analytic_colliders))
+        object.__setattr__(self, "collision_surfaces", tuple(self.collision_surfaces))
         object.__setattr__(self, "gravity", _vec3("gravity", self.gravity))
         _finite_values("fixed_dt", (self.fixed_dt,))
         if self.fixed_dt <= 0.0:
@@ -309,6 +369,10 @@ class WorldSpec:
             collider.id for collider in self.analytic_colliders
         )
         _reject_duplicates("collider", collider_ids)
+        _reject_duplicates(
+            "collision mesh",
+            (surface.id for surface in self.collision_surfaces),
+        )
         constraint_ids = tuple(
             constraint_id
             for bone in self.bones
@@ -330,6 +394,12 @@ class WorldSpec:
             for excluded in bone.excluded_body_ids:
                 if excluded not in body_id_set:
                     raise ValueError(f"excluded body {excluded} does not exist")
+        for surface in self.collision_surfaces:
+            for body_id, _regions in surface.body_region_ignores:
+                if body_id not in body_id_set:
+                    raise ValueError(
+                        f"collision surface {surface.object_name!r} references missing body {body_id}"
+                    )
 
         chains = {chain.id: chain for chain in self.chains}
         if len(chains) != len(self.chains):

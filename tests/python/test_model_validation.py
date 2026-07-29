@@ -7,6 +7,7 @@ from blender_extension.bone_physics.model import (
     AnalyticShape,
     BoneSpec,
     ChainSpec,
+    CollisionSurfaceSpec,
     CrossLinkSpec,
     WorldSpec,
 )
@@ -88,4 +89,36 @@ class ModelValidationTests(unittest.TestCase):
                 id=500,
                 shape=AnalyticShape.SPHERE,
                 radius=-0.1,
+            )
+
+    def test_collision_surface_configuration_is_validated_and_owned(self):
+        surface = CollisionSurfaceSpec(
+            id=600,
+            object_name="Torso",
+            default_region_id=10,
+            excluded_materials=("eyes",),
+            body_region_ignores=((7, (20, 30)),),
+            upstream_weight_merges=(("breast.L", "spine.003"),),
+            thickness=0.01,
+            simplify_max_error=0.002,
+        )
+        world = WorldSpec(bones=(bone(7),), collision_surfaces=(surface,))
+        self.assertEqual(world.collision_surfaces, (surface,))
+
+        with self.assertRaisesRegex(ValueError, "duplicate collision mesh ID"):
+            WorldSpec(
+                bones=(bone(7),),
+                collision_surfaces=(surface, surface),
+            )
+
+        with self.assertRaisesRegex(ValueError, "missing body 99"):
+            WorldSpec(
+                bones=(bone(7),),
+                collision_surfaces=(
+                    CollisionSurfaceSpec(
+                        id=601,
+                        object_name="Body",
+                        body_region_ignores=((99, (1,)),),
+                    ),
+                ),
             )

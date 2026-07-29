@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import math
 from typing import Protocol
 
-from .model import AnalyticColliderSpec, BoneSpec, WorldSpec
+from .mesh_builder import CollisionMeshBatch, MeshSource, build_collision_surface
+from .model import AnalyticColliderSpec, BoneSpec, CollisionSurfaceSpec, WorldSpec
 from .scene_adapter import Pose
 
 
@@ -30,6 +31,7 @@ class PrePhysicsSnapshot:
     target_poses: tuple[TargetPose, ...]
     collider_poses: tuple[ColliderPose, ...]
     object_to_simulation: tuple[float, ...]
+    mesh_batches: tuple[CollisionMeshBatch, ...] = ()
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.time):
@@ -65,12 +67,22 @@ class CaptureAdapter(Protocol):
         collider: AnalyticColliderSpec,
     ) -> Pose: ...
 
+    def collision_mesh_source(
+        self,
+        scene,
+        depsgraph,
+        surface: CollisionSurfaceSpec,
+        object_to_simulation: tuple[float, ...],
+    ) -> MeshSource: ...
+
 
 class PrePhysicsEvaluator:
     def __init__(self, adapter: CaptureAdapter) -> None:
         self.adapter = adapter
         self._last_targets: dict[int, Pose] = {}
         self._last_colliders: dict[int, Pose] = {}
+        self._last_mesh_sources: dict[int, MeshSource] = {}
+        self._mesh_templates: dict[int, CollisionMeshBatch] = {}
 
     def capture(self, scene, depsgraph, world_spec: WorldSpec) -> PrePhysicsSnapshot:
         body_ids = {bone.id for bone in world_spec.bones}
@@ -105,14 +117,36 @@ class PrePhysicsEvaluator:
             colliders.append(ColliderPose(collider.id, previous, current))
             next_colliders[collider.id] = current
 
+        mesh_batches = []
+        next_mesh_sources = {}
+        for surface in sorted(world_spec.collision_surfaces, key=lambda item: item.id):
+            current = self.adapter.collision_mesh_source(
+                scene,
+                depsgraph,
+                surface,
+                object_to_simulation,
+            )
+            previous = self._last_mesh_sources.get(surface.id, current)
+            batch = build_collision_surface(
+                current,
+                surface,
+                previous=previous,
+                template=self._mesh_templates.get(surface.id),
+            )
+            mesh_batches.append(batch)
+            self._mesh_templates.setdefault(surface.id, batch)
+            next_mesh_sources[surface.id] = current
+
         snapshot = PrePhysicsSnapshot(
             time=float(self.adapter.scene_time(scene)),
             target_poses=tuple(targets),
             collider_poses=tuple(colliders),
             object_to_simulation=object_to_simulation,
+            mesh_batches=tuple(mesh_batches),
         )
         self._last_targets = next_targets
         self._last_colliders = next_colliders
+        self._last_mesh_sources = next_mesh_sources
         return snapshot
 
     def capture_at(
@@ -142,17 +176,38 @@ class PrePhysicsEvaluator:
         self.adapter.evaluate_prephysics(scene, depsgraph)
         self.adapter.object_to_simulation(scene, depsgraph, world_spec)
 
-    def save_state(self) -> tuple[dict[int, Pose], dict[int, Pose]]:
-        return dict(self._last_targets), dict(self._last_colliders)
+    def save_state(
+        self,
+    ) -> tuple[
+        dict[int, Pose],
+        dict[int, Pose],
+        dict[int, MeshSource],
+        dict[int, CollisionMeshBatch],
+    ]:
+        return (
+            dict(self._last_targets),
+            dict(self._last_colliders),
+            dict(self._last_mesh_sources),
+            dict(self._mesh_templates),
+        )
 
     def restore_state(
         self,
-        state: tuple[dict[int, Pose], dict[int, Pose]],
+        state: tuple[
+            dict[int, Pose],
+            dict[int, Pose],
+            dict[int, MeshSource],
+            dict[int, CollisionMeshBatch],
+        ],
     ) -> None:
-        targets, colliders = state
+        targets, colliders, meshes, templates = state
         self._last_targets = dict(targets)
         self._last_colliders = dict(colliders)
+        self._last_mesh_sources = dict(meshes)
+        self._mesh_templates = dict(templates)
 
     def reset(self) -> None:
         self._last_targets.clear()
         self._last_colliders.clear()
+        self._last_mesh_sources.clear()
+        self._mesh_templates.clear()

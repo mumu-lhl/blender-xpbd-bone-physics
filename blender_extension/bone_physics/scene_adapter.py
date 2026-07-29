@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import math
 from typing import Iterable, Mapping
 
-from .model import AnalyticColliderSpec, BoneSpec
+from .mesh_builder import MeshSource, mesh_source_from_evaluated
+from .model import AnalyticColliderSpec, BoneSpec, CollisionSurfaceSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +133,24 @@ class BlenderSceneAdapter:
             return Pose(collider.translation, collider.rotation)
         evaluated = self._evaluated_object(scene, depsgraph, object_name)
         return pose_from_matrix(self._require_object_to_simulation() @ evaluated.matrix_world)
+
+    def collision_mesh_source(
+        self,
+        scene,
+        depsgraph,
+        surface: CollisionSurfaceSpec,
+        object_to_simulation: tuple[float, ...],
+    ) -> MeshSource:
+        evaluated = self._evaluated_object(
+            scene,
+            depsgraph,
+            surface.object_name,
+        )
+        return mesh_source_from_evaluated(
+            evaluated,
+            surface,
+            object_to_simulation,
+        )
 
     def stage_pose(self, armature, body_id: int, simulation_pose: Pose):
         mathutils = _mathutils()
