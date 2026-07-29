@@ -80,6 +80,9 @@ at `13`.
 `deterministic_preview`, `approximate_preview`, or `authoritative_bake` and
 returns one small diagnostics dictionary.
 
+`resume_world(handle)` revalidates a rolled-back world and clears its native
+pause state. A stale handle or still-invalid restored state is rejected.
+
 `read_transforms(handle, output)` writes exactly `7 * body_count` contiguous
 `f32` values in ascending stable body-ID order. Each row is translation
 followed by quaternion. `read_diagnostics(handle)` returns scalar world and

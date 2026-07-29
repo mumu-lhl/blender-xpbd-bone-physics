@@ -123,6 +123,16 @@ fn destroy_world(handle: u64) -> PyResult<()> {
 }
 
 #[pyfunction]
+fn resume_world(handle: u64) -> PyResult<()> {
+    catch_panic(|| {
+        lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), NativeWorld::resume)
+            .map_err(state_error)?
+            .map_err(operation_error)
+    })
+}
+
+#[pyfunction]
 fn set_animation_targets(
     py: Python<'_>,
     handle: u64,
@@ -271,6 +281,7 @@ fn bone_physics_native(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult
     module.add_function(wrap_pyfunction!(create_world, module)?)?;
     module.add_function(wrap_pyfunction!(build_world, module)?)?;
     module.add_function(wrap_pyfunction!(destroy_world, module)?)?;
+    module.add_function(wrap_pyfunction!(resume_world, module)?)?;
     module.add_function(wrap_pyfunction!(set_animation_targets, module)?)?;
     module.add_function(wrap_pyfunction!(set_analytic_colliders, module)?)?;
     module.add_function(wrap_pyfunction!(advance, module)?)?;

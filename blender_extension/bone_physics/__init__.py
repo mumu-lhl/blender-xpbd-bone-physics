@@ -18,6 +18,8 @@ from .parameter_builder import NativeBuildBatch, compile_world_spec
 from .pose_writer import PoseWriter
 from .prephysics_eval import PrePhysicsEvaluator, PrePhysicsSnapshot
 from .scene_adapter import BlenderSceneAdapter, Pose
+from .runtime import NativeRuntimeBridge, ReentryGuard, RuntimeWorld
+from .timeline import TimelineAction, TimelineActionKind, TimelineState, TimelineTime
 
 __all__ = [
     "AnalyticColliderSpec",
@@ -33,6 +35,13 @@ __all__ = [
     "PrePhysicsEvaluator",
     "PrePhysicsSnapshot",
     "BlenderSceneAdapter",
+    "NativeRuntimeBridge",
+    "ReentryGuard",
+    "RuntimeWorld",
+    "TimelineAction",
+    "TimelineActionKind",
+    "TimelineState",
+    "TimelineTime",
     "WorldSpec",
     "compile_world_spec",
     "get_native",

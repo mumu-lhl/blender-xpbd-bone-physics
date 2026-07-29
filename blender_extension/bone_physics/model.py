@@ -97,6 +97,8 @@ class BoneSpec:
     inverse_mass: float = 1.0
     inverse_inertia: Vec3 = ONE3
     gravity_scale: float = 1.0
+    translation_inertia: float = 1.0
+    rotation_inertia: float = 1.0
     linear_damping: float = 0.0
     angular_damping: float = 0.0
     capsule_local_a: Vec3 | None = None
@@ -185,6 +187,8 @@ class BoneSpec:
         if self.radius == 0.0:
             raise ValueError("radius must be greater than zero")
         _finite_values("gravity_scale", (self.gravity_scale,))
+        _nonnegative("translation_inertia", self.translation_inertia)
+        _nonnegative("rotation_inertia", self.rotation_inertia)
         if any(value < 0.0 for value in self.inverse_inertia):
             raise ValueError("inverse inertia values must be nonnegative")
         if any(lower > upper for lower, upper in zip(self.xyz_lower, self.xyz_upper)):

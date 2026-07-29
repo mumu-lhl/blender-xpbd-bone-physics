@@ -184,11 +184,14 @@ class NativeBatchTests(unittest.TestCase):
 
     def test_stale_handle_is_rejected_by_every_world_operation(self):
         handle = self.build()
+        native.resume_world(handle)
         native.destroy_world(handle)
         self._cleanups.pop()
 
         with self.assertRaises(native.BonePhysicsStateError):
             native.advance(handle, 1.0 / 60.0, "deterministic_preview")
+        with self.assertRaises(native.BonePhysicsStateError):
+            native.resume_world(handle)
 
     def test_writable_output_must_have_enough_f32_items(self):
         handle = self.build()

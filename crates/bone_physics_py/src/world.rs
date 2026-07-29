@@ -80,6 +80,10 @@ impl NativeWorld {
         self.solver.set_animation_targets(targets)
     }
 
+    pub fn resume(&mut self) -> Result<(), SolverError> {
+        self.solver.resume()
+    }
+
     pub fn set_analytic_colliders(
         &mut self,
         colliders: Vec<AnalyticProxy>,

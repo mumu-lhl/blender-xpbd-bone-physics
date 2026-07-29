@@ -51,3 +51,29 @@ class PoseWriter:
             for body_id, value in zip(ids[:written], previous[:written]):
                 self.adapter.write_pose_channel(armature, body_id, value)
             raise
+
+    def snapshot(self, armature, body_ids: Sequence[int]) -> tuple[object, ...]:
+        return tuple(
+            self.adapter.read_pose_channel(armature, body_id)
+            for body_id in body_ids
+        )
+
+    def restore(
+        self,
+        armature,
+        body_ids: Sequence[int],
+        values: Sequence[object],
+    ) -> None:
+        ids = tuple(body_ids)
+        stored = tuple(values)
+        if len(ids) != len(stored):
+            raise ValueError("body IDs and stored pose channels must have the same length")
+        first_error = None
+        for body_id, value in zip(ids, stored):
+            try:
+                self.adapter.write_pose_channel(armature, body_id, value)
+            except Exception as error:
+                if first_error is None:
+                    first_error = error
+        if first_error is not None:
+            raise first_error
