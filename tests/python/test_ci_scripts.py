@@ -19,7 +19,7 @@ from scripts.ci.run_blender_tests import (
     run_blender_tests,
 )
 from scripts.ci.inspect_native_wheel import unexpected_dependencies
-from scripts.ci.run_python_tests import command_report
+from scripts.ci.run_python_tests import command_report, unittest_arguments
 
 
 class BlenderInstallerTests(unittest.TestCase):
@@ -106,6 +106,12 @@ class BlenderRunnerTests(unittest.TestCase):
 
 
 class CommandReportTests(unittest.TestCase):
+    def test_discovery_arguments_are_compatible_with_python_311(self) -> None:
+        self.assertEqual(
+            unittest_arguments(Path("."), []),
+            ["-m", "unittest", "discover", "-s", "tests/python", "-v"],
+        )
+
     def test_failure_always_writes_report_and_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             report_dir = Path(directory)

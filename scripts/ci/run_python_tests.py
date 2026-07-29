@@ -56,6 +56,21 @@ def command_report(
     return result
 
 
+def unittest_arguments(root: Path, exclude_prefixes: list[str]) -> list[str]:
+    if not exclude_prefixes:
+        return ["-m", "unittest", "discover", "-s", "tests/python", "-v"]
+    return [
+        "-m",
+        "unittest",
+        "-v",
+        *(
+            f"tests.python.{path.stem}"
+            for path in sorted((root / "tests" / "python").glob("test_*.py"))
+            if not any(path.stem.startswith(prefix) for prefix in exclude_prefixes)
+        ),
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report-dir", type=Path, required=True)
@@ -63,17 +78,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--exclude-prefix", action="append", default=[])
     arguments = parser.parse_args()
-    test_arguments = ["-m", "unittest", "-v"]
-    if arguments.exclude_prefix:
-        test_arguments.extend(
-            f"tests.python.{path.stem}"
-            for path in sorted((arguments.root / "tests" / "python").glob("test_*.py"))
-            if not any(
-                path.stem.startswith(prefix) for prefix in arguments.exclude_prefix
-            )
-        )
-    else:
-        test_arguments.extend(("discover", "-s", "tests/python", "-v"))
+    test_arguments = unittest_arguments(arguments.root, arguments.exclude_prefix)
     commands = (
         (
             "compileall",
