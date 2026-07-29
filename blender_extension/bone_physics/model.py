@@ -262,6 +262,7 @@ class AnalyticColliderSpec:
     local_b: Vec3 = ZERO3
     half_extents: Vec3 = ZERO3
     enabled: bool = True
+    source_object: str | None = None
 
     def __post_init__(self) -> None:
         _id("analytic collider", self.id)
@@ -272,6 +273,8 @@ class AnalyticColliderSpec:
         _nonnegative("radius", self.radius)
         if any(value < 0.0 for value in self.half_extents):
             raise ValueError("half extents must be nonnegative")
+        if self.source_object == "":
+            raise ValueError("analytic collider source object must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
