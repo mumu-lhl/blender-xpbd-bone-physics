@@ -17,7 +17,7 @@ impl WorldHandle {
     }
 
     const fn from_parts(slot: u32, generation: u32) -> Self {
-        Self((u64::from(generation) << 32) | u64::from(slot))
+        Self(((generation as u64) << 32) | slot as u64)
     }
 
     const fn slot(self) -> u32 {
@@ -54,10 +54,7 @@ impl WorldRegistry {
         Self { slots: Vec::new() }
     }
 
-    pub fn insert(
-        &mut self,
-        world: SolverWorld,
-    ) -> Result<WorldHandle, RegistryError> {
+    pub fn insert(&mut self, world: SolverWorld) -> Result<WorldHandle, RegistryError> {
         if let Some((index, slot)) = self
             .slots
             .iter_mut()
@@ -66,14 +63,13 @@ impl WorldRegistry {
         {
             slot.world = Some(world);
             return Ok(WorldHandle::from_parts(
-                u32::try_from(index)
-                    .map_err(|_| RegistryError::CapacityExhausted)?,
+                u32::try_from(index).map_err(|_| RegistryError::CapacityExhausted)?,
                 slot.generation,
             ));
         }
 
-        let index = u32::try_from(self.slots.len())
-            .map_err(|_| RegistryError::CapacityExhausted)?;
+        let index =
+            u32::try_from(self.slots.len()).map_err(|_| RegistryError::CapacityExhausted)?;
         self.slots.push(Slot {
             generation: FIRST_GENERATION,
             reusable: true,
@@ -82,10 +78,7 @@ impl WorldRegistry {
         Ok(WorldHandle::from_parts(index, FIRST_GENERATION))
     }
 
-    pub fn remove(
-        &mut self,
-        handle: WorldHandle,
-    ) -> Result<SolverWorld, RegistryError> {
+    pub fn remove(&mut self, handle: WorldHandle) -> Result<SolverWorld, RegistryError> {
         let slot = self.live_slot_mut(handle)?;
         let next_generation = slot.generation.checked_add(1);
         let world = slot
@@ -113,10 +106,7 @@ impl WorldRegistry {
         Ok(operation(world))
     }
 
-    fn live_slot_mut(
-        &mut self,
-        handle: WorldHandle,
-    ) -> Result<&mut Slot, RegistryError> {
+    fn live_slot_mut(&mut self, handle: WorldHandle) -> Result<&mut Slot, RegistryError> {
         let slot = self
             .slots
             .get_mut(handle.slot() as usize)

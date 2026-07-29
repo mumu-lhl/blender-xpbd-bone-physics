@@ -5,8 +5,8 @@ use std::sync::{Mutex, OnceLock};
 
 use bone_physics_core::{SolverConfig, SolverWorld};
 use error::{
-    BonePhysicsInputError, BonePhysicsInternalError, BonePhysicsStateError,
-    catch_panic, input_error, state_error,
+    BonePhysicsInputError, BonePhysicsInternalError, BonePhysicsStateError, catch_panic,
+    input_error, state_error,
 };
 use glam::Vec3;
 use pyo3::prelude::*;
@@ -23,11 +23,9 @@ fn worlds() -> &'static Mutex<WorldRegistry> {
 }
 
 fn lock_worlds() -> PyResult<std::sync::MutexGuard<'static, WorldRegistry>> {
-    worlds().lock().map_err(|_| {
-        BonePhysicsInternalError::new_err(
-            "native world registry lock was poisoned",
-        )
-    })
+    worlds()
+        .lock()
+        .map_err(|_| BonePhysicsInternalError::new_err("native world registry lock was poisoned"))
 }
 
 #[pyfunction]
@@ -51,10 +49,7 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<SolverConfig> {
 }
 
 #[pyfunction]
-fn create_world(
-    config: &Bound<'_, PyAny>,
-    build_batch: &Bound<'_, PyAny>,
-) -> PyResult<u64> {
+fn create_world(config: &Bound<'_, PyAny>, build_batch: &Bound<'_, PyAny>) -> PyResult<u64> {
     catch_panic(|| {
         if build_batch.len().map_err(input_error)? != 0 {
             return Err(input_error(
@@ -62,11 +57,8 @@ fn create_world(
             ));
         }
         let config = extract_config(config)?;
-        let world =
-            SolverWorld::new(config, Vec::new()).map_err(input_error)?;
-        let handle = lock_worlds()?
-            .insert(world)
-            .map_err(state_error)?;
+        let world = SolverWorld::new(config, Vec::new()).map_err(input_error)?;
+        let handle = lock_worlds()?.insert(world).map_err(state_error)?;
         Ok(handle.get())
     })
 }
@@ -90,10 +82,7 @@ fn _trigger_test_panic() -> PyResult<()> {
 }
 
 #[pymodule]
-fn bone_physics_native(
-    py: Python<'_>,
-    module: &Bound<'_, PyModule>,
-) -> PyResult<()> {
+fn bone_physics_native(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add(
         "BonePhysicsInputError",
         py.get_type::<BonePhysicsInputError>(),

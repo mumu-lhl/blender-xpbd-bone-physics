@@ -5,16 +5,8 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-create_exception!(
-    bone_physics_native,
-    BonePhysicsInputError,
-    PyValueError
-);
-create_exception!(
-    bone_physics_native,
-    BonePhysicsStateError,
-    PyRuntimeError
-);
+create_exception!(bone_physics_native, BonePhysicsInputError, PyValueError);
+create_exception!(bone_physics_native, BonePhysicsStateError, PyRuntimeError);
 create_exception!(
     bone_physics_native,
     BonePhysicsInternalError,
@@ -37,9 +29,7 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
         .unwrap_or("native solver panicked without a string payload")
 }
 
-pub(crate) fn catch_panic<T>(
-    operation: impl FnOnce() -> PyResult<T>,
-) -> PyResult<T> {
+pub(crate) fn catch_panic<T>(operation: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     match catch_unwind(AssertUnwindSafe(operation)) {
         Ok(result) => result,
         Err(payload) => Err(BonePhysicsInternalError::new_err(format!(

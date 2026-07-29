@@ -21,6 +21,8 @@ fn destroyed_handle_never_aliases_a_reused_slot() {
     registry.remove(stale).unwrap();
     let replacement = registry.insert(empty_world()).unwrap();
 
+    assert_eq!(stale.get(), 1_u64 << 32);
+    assert_eq!(replacement.get(), 2_u64 << 32);
     assert_ne!(stale, replacement);
     assert_eq!(
         registry.remove(stale).unwrap_err(),
