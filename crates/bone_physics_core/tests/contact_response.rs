@@ -1,8 +1,8 @@
 use bone_physics_core::{
     AnalyticProxy, AnalyticShape, AngularLimit, BodyId, BodyInit, BoneBodyDesc, Capsule,
-    CapsuleColliderDesc, ColliderId, CollisionFilter, ConstraintId, ContactMaterial, EulerOrder,
-    PersistentConstraint, Pose, QualityPolicy, SolverConfig, SolverError, SolverWorld, StepOptions,
-    Velocity, XyzLimit,
+    CapsuleColliderDesc, ColliderId, CollisionFilter, ConstraintId, ContactMaterial, DeformingMesh,
+    EulerOrder, MeshId, MeshTopology, PersistentConstraint, Pose, QualityPolicy, RegionId,
+    SolverConfig, SolverError, SolverWorld, StepOptions, Velocity, XyzLimit,
 };
 use glam::{Quat, Vec3};
 
@@ -113,6 +113,30 @@ fn analytic_ground(id: u32, linear_velocity: Vec3) -> AnalyticProxy {
     }
 }
 
+fn mesh_ground(id: u32, previous_offset: Vec3, current_offset: Vec3) -> DeformingMesh {
+    let base = [
+        Vec3::new(-4.0, 0.0, -4.0),
+        Vec3::new(4.0, 0.0, -4.0),
+        Vec3::new(4.0, 0.0, 4.0),
+        Vec3::new(-4.0, 0.0, 4.0),
+    ];
+    let previous = base.map(|point| point + previous_offset).to_vec();
+    let current = base.map(|point| point + current_offset).to_vec();
+    DeformingMesh::rebuild(
+        MeshId::new(id),
+        MeshTopology {
+            vertex_count: 4,
+            triangles: vec![[0, 2, 1], [0, 3, 2]],
+            triangle_regions: vec![RegionId::new(1); 2],
+            closed_hint: false,
+        },
+        previous,
+        current,
+        0.0,
+    )
+    .unwrap()
+}
+
 #[test]
 fn analytic_proxy_contact_is_solved_and_reported() {
     let material = ContactMaterial::try_new(0.8, 0.0).unwrap();
@@ -157,6 +181,92 @@ fn analytic_proxy_friction_uses_surface_velocity() {
     let velocity = world.body(BodyId::new(1)).unwrap().velocity.linear.x;
     assert!(velocity > 0.1);
     assert!(velocity <= 1.0 + 1.0e-3);
+}
+
+#[test]
+fn deforming_mesh_contact_uses_the_existing_contact_solver_and_diagnostics() {
+    let material = ContactMaterial::try_new(0.8, 0.0).unwrap();
+    let mut world = world(
+        Vec3::new(0.0, -9.81, 0.0),
+        vec![body(1, Vec3::new(0.0, 0.24, 0.0), Vec3::ZERO, true)],
+    );
+    world
+        .set_colliders(vec![sphere(10, 1, Vec3::ZERO, material)])
+        .unwrap();
+    world
+        .set_meshes(vec![mesh_ground(30, Vec3::ZERO, Vec3::ZERO)])
+        .unwrap();
+
+    let diagnostics = world.substep(DT, 1.0, options()).unwrap();
+
+    assert!(diagnostics.generated_contacts > 0);
+    assert!(diagnostics.generated_contacts <= 4);
+    assert!(diagnostics.active_contacts > 0);
+    assert!(diagnostics.deepest_penetration <= RESIDUAL_PENETRATION);
+    assert!(world.body(BodyId::new(1)).unwrap().pose.translation.y >= 0.25);
+}
+
+#[test]
+fn deforming_mesh_friction_uses_interpolated_vertex_velocity() {
+    let material = ContactMaterial::try_new(1.0, 0.0).unwrap();
+    let mut world = world(
+        Vec3::new(0.0, -9.81, 0.0),
+        vec![body(1, Vec3::new(0.0, 0.24, 0.0), Vec3::ZERO, true)],
+    );
+    world
+        .set_colliders(vec![sphere(10, 1, Vec3::ZERO, material)])
+        .unwrap();
+
+    for step in 1..=30 {
+        let current = Vec3::X * (step as f32 * DT);
+        let previous = current - Vec3::X * DT;
+        world
+            .set_meshes(vec![mesh_ground(30, previous, current)])
+            .unwrap();
+        world.substep(DT, 1.0, options()).unwrap();
+    }
+
+    let velocity = world.body(BodyId::new(1)).unwrap().velocity.linear.x;
+    assert!(velocity > 0.1);
+    assert!(velocity <= 1.0 + 1.0e-3);
+}
+
+#[test]
+fn duplicate_mesh_replacement_is_atomic_and_preserves_contact_behavior() {
+    let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
+    let mut world = world(
+        Vec3::ZERO,
+        vec![body(1, Vec3::new(0.0, 0.24, 0.0), Vec3::ZERO, true)],
+    );
+    world
+        .set_colliders(vec![sphere(10, 1, Vec3::ZERO, material)])
+        .unwrap();
+    world
+        .set_meshes(vec![mesh_ground(30, Vec3::ZERO, Vec3::ZERO)])
+        .unwrap();
+
+    let error = world
+        .set_meshes(vec![
+            mesh_ground(30, Vec3::ZERO, Vec3::ZERO),
+            mesh_ground(30, Vec3::ZERO, Vec3::ZERO),
+        ])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SolverError::DuplicateId {
+            kind: "mesh",
+            id: 30,
+        }
+    );
+    assert_eq!(world.mesh_count(), 1);
+    assert!(
+        world
+            .substep(DT, 1.0, options())
+            .unwrap()
+            .generated_contacts
+            > 0
+    );
 }
 
 #[test]

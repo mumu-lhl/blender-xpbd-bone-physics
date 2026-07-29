@@ -21,9 +21,11 @@ pub use chain::{
 pub use collision::{
     AnalyticContact, AnalyticProxy, AnalyticShape, BroadPhaseBackend, CachedContact, Capsule,
     CapsuleCollider, CapsuleColliderDesc, CapsuleManifold, CollisionFilter, CollisionPipeline,
-    ContactGeometry, ContactKey, ContactLambdas, ContactMaterial, DeformingMesh, MeshTopology,
-    MeshUpdate, MeshValidationIssue, MeshValidationReport, PairKey, capsule_analytic_contact,
-    capsule_manifold,
+    ContactGeometry, ContactKey, ContactLambdas, ContactMaterial, DeformingMesh,
+    MeshContactFeature, MeshContactGeometry, MeshContactHistory, MeshContactKey,
+    MeshManifoldLimits, MeshTopology, MeshUpdate, MeshValidationIssue, MeshValidationReport,
+    MovingTriangle, PairKey, TriangleFeature, TriangleFeatureOwner, TriangleFeatureOwners,
+    capsule_analytic_contact, capsule_manifold, capsule_triangle_contact, cluster_mesh_contacts,
 };
 pub use constraint::{
     AngularLimit, AnimationTarget, ConstraintKind, ContinuousAngles, EulerOrder,

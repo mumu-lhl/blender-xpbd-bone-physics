@@ -7,7 +7,10 @@ use parry3d::partitioning::{Bvh, BvhBuildStrategy, BvhWorkspace};
 
 use crate::error::validate_nonnegative;
 use crate::pose::validate_vec3;
-use crate::{MeshId, RegionId, SolverError, TriangleId};
+use crate::{
+    CapsuleCollider, MeshId, MovingTriangle, RegionId, SolverError, TriangleFeature,
+    TriangleFeatureOwner, TriangleFeatureOwners, TriangleId,
+};
 
 const TRIANGLE_AREA_EPSILON_SQUARED: f32 = 1.0e-16;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -78,6 +81,7 @@ pub enum MeshUpdate {
     Rebuilt,
 }
 
+#[derive(Clone)]
 pub struct DeformingMesh {
     id: MeshId,
     topology: MeshTopology,
@@ -86,8 +90,26 @@ pub struct DeformingMesh {
     thickness: f32,
     report: MeshValidationReport,
     active_triangles: Vec<TriangleId>,
+    feature_owners: Vec<TriangleFeatureOwners>,
     bvh: Bvh,
     bvh_workspace: BvhWorkspace,
+}
+
+impl core::fmt::Debug for DeformingMesh {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("DeformingMesh")
+            .field("id", &self.id)
+            .field("topology", &self.topology)
+            .field("previous_positions", &self.previous_positions)
+            .field("current_positions", &self.current_positions)
+            .field("thickness", &self.thickness)
+            .field("report", &self.report)
+            .field("active_triangles", &self.active_triangles)
+            .field("feature_owners", &self.feature_owners)
+            .field("bvh", &self.bvh)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DeformingMesh {
@@ -120,6 +142,7 @@ impl DeformingMesh {
             &current_positions,
             thickness,
         )?;
+        let feature_owners = build_feature_owners(&topology, &active_triangles);
         let bvh = Bvh::from_leaves(BvhBuildStrategy::default(), &aabbs);
         Ok(Self {
             id,
@@ -129,6 +152,7 @@ impl DeformingMesh {
             thickness,
             report,
             active_triangles,
+            feature_owners,
             bvh,
             bvh_workspace: BvhWorkspace::default(),
         })
@@ -183,6 +207,72 @@ impl DeformingMesh {
         Ok(result)
     }
 
+    pub fn query_capsule_sweep(
+        &self,
+        previous: &CapsuleCollider,
+        current: &CapsuleCollider,
+    ) -> Result<Vec<TriangleId>, SolverError> {
+        previous.validate()?;
+        current.validate()?;
+        if previous.id != current.id
+            || previous.body != current.body
+            || previous.shape != current.shape
+            || previous.filter != current.filter
+        {
+            return Err(SolverError::invalid_value(
+                "mesh_collider_snapshot_metadata",
+                current.id.get(),
+            ));
+        }
+        let (previous_a, previous_b) = previous.world_segment()?;
+        let (current_a, current_b) = current.world_segment()?;
+        let radius = Vec3::splat(current.shape.effective_radius()?);
+        let minimum = previous_a.min(previous_b).min(current_a).min(current_b) - radius;
+        let maximum = previous_a.max(previous_b).max(current_a).max(current_b) + radius;
+        self.query_aabb(minimum, maximum)
+    }
+
+    pub fn moving_triangle(&self, id: TriangleId, dt: f32) -> Result<MovingTriangle, SolverError> {
+        if !dt.is_finite() || dt <= 0.0 {
+            return Err(SolverError::invalid_value("dt", dt));
+        }
+        if self.active_triangles.binary_search(&id).is_err() {
+            return Err(SolverError::invalid_value("triangle_id", id.get()));
+        }
+        let index = usize::try_from(id.get())
+            .map_err(|_| SolverError::invalid_value("triangle_id", id.get()))?;
+        let vertices = *self
+            .topology
+            .triangles
+            .get(index)
+            .ok_or_else(|| SolverError::invalid_value("triangle_id", id.get()))?;
+        let region = *self
+            .topology
+            .triangle_regions
+            .get(index)
+            .ok_or_else(|| SolverError::invalid_value("triangle_region", id.get()))?;
+        let current = vertices.map(|vertex| self.current_positions[vertex as usize]);
+        let velocities = vertices.map(|vertex| {
+            (self.current_positions[vertex as usize] - self.previous_positions[vertex as usize])
+                / dt
+        });
+        let triangle = MovingTriangle {
+            mesh: self.id,
+            triangle: id,
+            region,
+            vertices: current,
+            velocities,
+            thickness: self.thickness,
+            // A closed hint alone is insufficient to choose a globally correct
+            // depenetration side. Keep surface collision two-sided until the
+            // narrow phase has pseudo-normal and local inside/outside evidence.
+            two_sided: true,
+            feature_owners: self.feature_owners.get(index).copied(),
+        };
+        triangle.validate()?;
+        Ok(triangle)
+    }
+
     #[must_use]
     pub fn id(&self) -> MeshId {
         self.id
@@ -217,6 +307,62 @@ impl DeformingMesh {
     pub fn active_triangle_ids(&self) -> &[TriangleId] {
         &self.active_triangles
     }
+}
+
+fn build_feature_owners(
+    topology: &MeshTopology,
+    active_triangles: &[TriangleId],
+) -> Vec<TriangleFeatureOwners> {
+    let mut edge_owners = BTreeMap::<[u32; 2], TriangleFeatureOwner>::new();
+    let mut vertex_owners = BTreeMap::<u32, TriangleFeatureOwner>::new();
+    for triangle in active_triangles.iter().copied() {
+        let vertices = topology.triangles[triangle.get() as usize];
+        for (local, vertex) in vertices.into_iter().enumerate() {
+            vertex_owners.entry(vertex).or_insert(TriangleFeatureOwner {
+                triangle,
+                feature: TriangleFeature::Vertex(local as u8),
+            });
+        }
+        for (local, [start, end]) in [[0, 1], [1, 2], [2, 0]].into_iter().enumerate() {
+            let mut edge = [vertices[start], vertices[end]];
+            edge.sort_unstable();
+            edge_owners.entry(edge).or_insert(TriangleFeatureOwner {
+                triangle,
+                feature: TriangleFeature::Edge(local as u8),
+            });
+        }
+    }
+    let mut owners = topology
+        .triangles
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(triangle, _)| {
+            let triangle = TriangleId::new(triangle as u32);
+            TriangleFeatureOwners {
+                edges: [0, 1, 2].map(|feature| TriangleFeatureOwner {
+                    triangle,
+                    feature: TriangleFeature::Edge(feature),
+                }),
+                vertices: [0, 1, 2].map(|feature| TriangleFeatureOwner {
+                    triangle,
+                    feature: TriangleFeature::Vertex(feature),
+                }),
+            }
+        })
+        .collect::<Vec<_>>();
+    for triangle in active_triangles.iter().copied() {
+        let vertices = topology.triangles[triangle.get() as usize];
+        owners[triangle.get() as usize] = TriangleFeatureOwners {
+            edges: [[0, 1], [1, 2], [2, 0]].map(|[start, end]| {
+                let mut edge = [vertices[start], vertices[end]];
+                edge.sort_unstable();
+                edge_owners[&edge]
+            }),
+            vertices: vertices.map(|vertex| vertex_owners[&vertex]),
+        };
+    }
+    owners
 }
 
 fn validate_mesh(

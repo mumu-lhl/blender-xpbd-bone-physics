@@ -242,4 +242,16 @@ fn query_results_use_stable_triangle_ids() {
         .unwrap();
 
     assert_eq!(ids, vec![TriangleId::new(1)]);
+    let owners = mesh
+        .moving_triangle(TriangleId::new(1), 1.0 / 60.0)
+        .unwrap()
+        .feature_owners
+        .unwrap();
+    assert!(
+        owners
+            .vertices
+            .iter()
+            .all(|owner| owner.triangle == TriangleId::new(1)),
+        "invalid triangles must never own persistent contact features"
+    );
 }
