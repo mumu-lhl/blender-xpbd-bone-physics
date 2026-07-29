@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/bone_physics_core",
+    "crates/bone_physics_py",
 ]
 resolver = "2"
 
@@ -12,7 +13,7 @@ rust-version = "1.97"
 [profile.release]
 codegen-units = 1
 lto = "thin"
-panic = "abort"
+panic = "unwind"
 
 [profile.bench]
 lto = false
