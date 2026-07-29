@@ -21,8 +21,9 @@ pub use chain::{
 pub use collision::{
     AnalyticContact, AnalyticProxy, AnalyticShape, BroadPhaseBackend, CachedContact, Capsule,
     CapsuleCollider, CapsuleColliderDesc, CapsuleManifold, CollisionFilter, CollisionPipeline,
-    ContactGeometry, ContactKey, ContactLambdas, ContactMaterial, PairKey,
-    capsule_analytic_contact, capsule_manifold,
+    ContactGeometry, ContactKey, ContactLambdas, ContactMaterial, DeformingMesh, MeshTopology,
+    MeshUpdate, MeshValidationIssue, MeshValidationReport, PairKey, capsule_analytic_contact,
+    capsule_manifold,
 };
 pub use constraint::{
     AngularLimit, AnimationTarget, ConstraintKind, ContinuousAngles, EulerOrder,
@@ -31,7 +32,7 @@ pub use constraint::{
 };
 pub use error::SolverError;
 pub use graph::{ConstraintClass, ConstraintColor, ConstraintSchedule};
-pub use id::{BodyId, ColliderId, ConstraintId};
+pub use id::{BodyId, ColliderId, ConstraintId, MeshId, RegionId, TriangleId};
 pub use math::{quat_exp, quat_log, world_inverse_inertia};
 pub use parameter::{CurveInterpolation, CurvePoint, ParameterCurve};
 pub use pose::{Pose, QUATERNION_NORMALIZATION_TOLERANCE, Velocity};

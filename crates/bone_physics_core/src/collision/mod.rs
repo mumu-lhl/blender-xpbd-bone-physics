@@ -3,6 +3,7 @@ mod broad_phase;
 mod capsule;
 mod contact;
 mod filter;
+mod mesh;
 mod shape;
 
 pub use analytic::{AnalyticContact, AnalyticProxy, AnalyticShape, capsule_analytic_contact};
@@ -12,4 +13,7 @@ pub use contact::{
     CachedContact, CapsuleColliderDesc, ContactKey, ContactLambdas, ContactMaterial,
 };
 pub use filter::CollisionFilter;
+pub use mesh::{
+    DeformingMesh, MeshTopology, MeshUpdate, MeshValidationIssue, MeshValidationReport,
+};
 pub use shape::{Capsule, CapsuleCollider};
