@@ -1,5 +1,5 @@
 use bone_physics_core::{SolverConfig, SolverWorld};
-use bone_physics_py::{RegistryError, WorldRegistry};
+use bone_physics_native::{RegistryError, WorldRegistry};
 use glam::Vec3;
 
 fn empty_world() -> SolverWorld {
