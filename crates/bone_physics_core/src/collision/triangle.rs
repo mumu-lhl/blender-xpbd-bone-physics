@@ -99,6 +99,7 @@ pub struct MeshContactHistory {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshContactGeometry {
     pub key: MeshContactKey,
+    pub source_triangle: TriangleId,
     pub geometry: ContactGeometry,
     pub barycentric: Vec3,
     pub segment_t: f32,
@@ -201,6 +202,7 @@ pub fn capsule_triangle_contact(
             triangle: owner.triangle,
             feature: key_feature.encode(),
         },
+        source_triangle: triangle.triangle,
         geometry: ContactGeometry {
             point_a,
             point_b,
@@ -418,7 +420,9 @@ fn triangle_feature(barycentric: Vec3) -> TriangleFeature {
     }
     for index in 0..3 {
         if barycentric[index] <= FEATURE_EPSILON {
-            return TriangleFeature::Edge(index as u8);
+            // Barycentric coordinate 0 is opposite vertex 0, so it maps to
+            // stored edge [1, 2]; likewise 1 -> [2, 0] and 2 -> [0, 1].
+            return TriangleFeature::Edge(((index + 1) % 3) as u8);
         }
     }
     TriangleFeature::Face

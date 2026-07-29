@@ -89,6 +89,7 @@ struct AnalyticContactGeometry {
 #[derive(Clone, Copy, Debug)]
 struct MeshCachedContact {
     key: MeshContactKey,
+    source_triangle: crate::TriangleId,
     body_collider: crate::ColliderId,
     contact: CachedContact,
     was_separated: bool,
@@ -1291,7 +1292,7 @@ impl SolverWorld {
                         .find(|cached| {
                             cached.body_collider == collider.id
                                 && cached.key.mesh == mesh.id()
-                                && cached.key.triangle == triangle_id
+                                && cached.source_triangle == triangle_id
                         })
                         .map(|cached| MeshContactHistory {
                             normal: cached.contact.normal,
@@ -1334,7 +1335,8 @@ impl SolverWorld {
                     }
                     contact.validate()?;
 
-                    let mut previous_triangle = mesh.moving_triangle(geometry.key.triangle, dt)?;
+                    let mut previous_triangle =
+                        mesh.moving_triangle(geometry.source_triangle, dt)?;
                     for index in 0..3 {
                         previous_triangle.vertices[index] -=
                             previous_triangle.velocities[index] * dt;
@@ -1347,6 +1349,7 @@ impl SolverWorld {
                             .is_none();
                     generated.push(MeshCachedContact {
                         key: geometry.key,
+                        source_triangle: geometry.source_triangle,
                         body_collider: collider.id,
                         contact,
                         was_separated,
@@ -1671,7 +1674,7 @@ impl SolverWorld {
             ));
         }
         let mesh = mesh_by_id(meshes, cached.key.mesh)?;
-        let triangle = mesh.moving_triangle(cached.key.triangle, dt)?;
+        let triangle = mesh.moving_triangle(cached.source_triangle, dt)?;
         let barycentric = cached.contact.local_b;
         validate_vec3("mesh_contact_barycentric", barycentric)?;
         if barycentric.min_element() < -1.0e-4 || (barycentric.element_sum() - 1.0).abs() > 1.0e-4 {
@@ -2352,7 +2355,7 @@ impl SolverWorld {
                             .find(|cached| {
                                 cached.body_collider == collider.id
                                     && cached.key.mesh == mesh.id()
-                                    && cached.key.triangle == triangle_id
+                                    && cached.source_triangle == triangle_id
                             })
                             .map(|cached| MeshContactHistory {
                                 normal: cached.contact.normal,

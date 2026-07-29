@@ -18,6 +18,7 @@ fn raw(triangle: u32, position: Vec3, normal: Vec3, penetration: f32) -> MeshCon
             triangle: TriangleId::new(triangle),
             feature: feature.encode(),
         },
+        source_triangle: TriangleId::new(triangle),
         geometry: ContactGeometry {
             point_a: position,
             point_b: position - normal * penetration,
@@ -94,6 +95,47 @@ fn convex_crease_preserves_materially_different_normals() {
             .iter()
             .any(|contact| contact.geometry.normal == Vec3::X)
     );
+}
+
+#[test]
+fn shared_feature_owner_never_replaces_the_source_triangle_geometry() {
+    let positions = vec![
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(1.0, 1.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+    ];
+    let mesh = DeformingMesh::build(
+        MeshId::new(5),
+        MeshTopology {
+            vertex_count: 4,
+            triangles: vec![[0, 1, 2], [0, 2, 3]],
+            triangle_regions: vec![RegionId::new(1); 2],
+            closed_hint: false,
+        },
+        positions,
+        0.0,
+    )
+    .unwrap();
+    let capsule = CapsuleCollider {
+        id: ColliderId::new(3),
+        body: BodyId::new(1),
+        shape: Capsule::try_new(Vec3::new(0.5, 0.5, 0.1), Vec3::new(0.5, 0.5, 0.1), 0.2, 0.0)
+            .unwrap(),
+        pose: Pose::IDENTITY,
+        linear_velocity: Vec3::ZERO,
+        filter: CollisionFilter::default(),
+    };
+    let triangle = mesh
+        .moving_triangle(TriangleId::new(1), 1.0 / 60.0)
+        .unwrap();
+
+    let contact = capsule_triangle_contact(&capsule, &triangle, None)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(contact.key.triangle, TriangleId::new(0));
+    assert_eq!(contact.source_triangle, TriangleId::new(1));
 }
 
 #[test]
