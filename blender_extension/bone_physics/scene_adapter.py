@@ -84,6 +84,17 @@ class BlenderSceneAdapter:
             self.write_pose_channel(armature, body_id, staged)
 
     @staticmethod
+    def set_scene_time(scene, seconds: float) -> None:
+        if not math.isfinite(seconds):
+            raise ValueError("scene time must be finite")
+        fps = float(scene.render.fps) / float(scene.render.fps_base)
+        if not math.isfinite(fps) or fps <= 0.0:
+            raise ValueError("scene FPS must be finite and positive")
+        frame_time = seconds * fps
+        frame = math.floor(frame_time)
+        scene.frame_set(frame, subframe=frame_time - frame)
+
+    @staticmethod
     def evaluate_prephysics(scene, depsgraph) -> None:
         del scene
         depsgraph.update()

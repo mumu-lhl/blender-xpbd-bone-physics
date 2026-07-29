@@ -41,6 +41,8 @@ class PrePhysicsSnapshot:
 
 
 class CaptureAdapter(Protocol):
+    def set_scene_time(self, scene, seconds: float) -> None: ...
+
     def restore_animation_references(self, scene, references: dict[int, Pose]) -> None: ...
 
     def evaluate_prephysics(self, scene, depsgraph) -> None: ...
@@ -112,6 +114,44 @@ class PrePhysicsEvaluator:
         self._last_targets = next_targets
         self._last_colliders = next_colliders
         return snapshot
+
+    def capture_at(
+        self,
+        scene,
+        depsgraph,
+        world_spec: WorldSpec,
+        sample_time: float,
+    ) -> PrePhysicsSnapshot:
+        if not math.isfinite(sample_time):
+            raise ValueError("pre-physics sample time must be finite")
+        self.adapter.set_scene_time(scene, sample_time)
+        return self.capture(scene, depsgraph, world_spec)
+
+    def restore_time(
+        self,
+        scene,
+        depsgraph,
+        world_spec: WorldSpec,
+        time: float,
+    ) -> None:
+        if not math.isfinite(time):
+            raise ValueError("pre-physics restore time must be finite")
+        if self._last_targets:
+            self.adapter.restore_animation_references(scene, self._last_targets)
+        self.adapter.set_scene_time(scene, time)
+        self.adapter.evaluate_prephysics(scene, depsgraph)
+        self.adapter.object_to_simulation(scene, depsgraph, world_spec)
+
+    def save_state(self) -> tuple[dict[int, Pose], dict[int, Pose]]:
+        return dict(self._last_targets), dict(self._last_colliders)
+
+    def restore_state(
+        self,
+        state: tuple[dict[int, Pose], dict[int, Pose]],
+    ) -> None:
+        targets, colliders = state
+        self._last_targets = dict(targets)
+        self._last_colliders = dict(colliders)
 
     def reset(self) -> None:
         self._last_targets.clear()

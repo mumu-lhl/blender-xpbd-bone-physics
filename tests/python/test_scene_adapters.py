@@ -31,6 +31,9 @@ class FakeCaptureAdapter:
         self.events.append("restore")
         scene.visible.update(references)
 
+    def set_scene_time(self, scene, seconds):
+        scene.time = seconds
+
     def evaluate_prephysics(self, scene, depsgraph):
         self.events.append("evaluate")
         scene.visible.update(scene.animation)

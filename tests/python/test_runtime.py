@@ -53,19 +53,41 @@ class Evaluator:
         self.events = events
         self.runtime = None
         self.reenter = False
+        self.capture_times = []
+        self.saved_state = 0
+        self.state = 0
 
-    def capture(self, scene, depsgraph, world_spec):
+    def capture_at(self, scene, depsgraph, world_spec, sample_time):
+        scene.seconds = sample_time
         self.events.append("capture")
+        self.capture_times.append(sample_time)
+        self.state += 1
         if self.reenter:
             self.runtime.on_frame_change(scene, depsgraph)
         return PrePhysicsSnapshot(scene.seconds, (), (), IDENTITY)
+
+    def restore_time(self, scene, depsgraph, world_spec, time):
+        del depsgraph, world_spec
+        scene.seconds = time
+
+    def reset(self):
+        self.state = 0
+
+    def save_state(self):
+        self.saved_state = self.state
+        return self.state
+
+    def restore_state(self, state):
+        self.state = state
 
 
 class Bridge:
     def __init__(self, events):
         self.events = events
         self.fail = False
+        self.fail_after = None
         self.paused = []
+        self.solve_actions = []
 
     def prepare(self, handle, action):
         self.events.append(f"prepare:{action.kind.value}")
@@ -76,7 +98,11 @@ class Bridge:
 
     def solve(self, handle, action):
         self.events.append("solve")
-        if self.fail:
+        self.solve_actions.append(action)
+        if self.fail or (
+            self.fail_after is not None
+            and len(self.solve_actions) >= self.fail_after
+        ):
             raise RuntimeError("native solve failed")
 
     def read_poses(self, handle, body_ids):
@@ -163,6 +189,66 @@ class RuntimeTests(unittest.TestCase):
 
         self.assertFalse(result.executed)
         self.assertEqual(events, [])
+
+    def test_skipped_frame_samples_and_solves_each_fixed_time(self):
+        events = []
+        runtime, evaluator, bridge, _writer = self.runtime(events)
+        scene = Scene()
+        runtime.on_frame_change(scene, object())
+        evaluator.capture_times.clear()
+        bridge.solve_actions.clear()
+
+        scene.seconds = 0.03
+        result = runtime.on_frame_change(scene, object())
+
+        self.assertTrue(result.executed)
+        self.assertEqual(
+            evaluator.capture_times,
+            [1.0 / 120.0, 2.0 / 120.0, 3.0 / 120.0],
+        )
+        self.assertEqual(
+            [action.fixed_times for action in bridge.solve_actions],
+            [
+                (1.0 / 120.0,),
+                (2.0 / 120.0,),
+                (3.0 / 120.0,),
+            ],
+        )
+        self.assertAlmostEqual(scene.seconds, 0.03)
+
+    def test_fractional_time_without_a_fixed_tick_does_not_consume_input_history(self):
+        events = []
+        runtime, evaluator, bridge, _writer = self.runtime(events)
+        scene = Scene()
+        runtime.on_frame_change(scene, object())
+        state_before = evaluator.state
+        evaluator.capture_times.clear()
+        bridge.solve_actions.clear()
+
+        scene.seconds = 0.004
+        result = runtime.on_frame_change(scene, object())
+
+        self.assertTrue(result.executed)
+        self.assertEqual(evaluator.capture_times, [])
+        self.assertEqual(bridge.solve_actions, [])
+        self.assertEqual(evaluator.state, state_before)
+        self.assertAlmostEqual(scene.seconds, 0.004)
+
+    def test_failed_replay_restores_sample_history_and_requested_time(self):
+        events = []
+        runtime, evaluator, bridge, _writer = self.runtime(events)
+        scene = Scene()
+        runtime.on_frame_change(scene, object())
+        state_before = evaluator.state
+        bridge.solve_actions.clear()
+        bridge.fail_after = 2
+
+        scene.seconds = 0.03
+        result = runtime.on_frame_change(scene, object())
+
+        self.assertTrue(result.paused)
+        self.assertEqual(evaluator.state, state_before)
+        self.assertAlmostEqual(scene.seconds, 0.03)
 
     def test_bridge_failure_retains_pose_and_pauses_only_this_world(self):
         events = []

@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from array import array
 from dataclasses import dataclass
+import math
 from typing import Callable, Protocol, Sequence
 
 from .parameter_builder import NativeBuildBatch
@@ -96,11 +97,10 @@ class RuntimeWorld:
                     paused=False,
                     reentrant=True,
                 )
+            observed_time = self.time_source(scene)
             saved_timeline = self.timeline.save_observation()
-            action = self.timeline.observe(
-                self.time_source(scene),
-                self.cache_index,
-            )
+            saved_evaluator = self.evaluator.save_state()
+            action = self.timeline.observe(observed_time, self.cache_index)
             if action.kind is TimelineActionKind.NO_OP:
                 return RuntimeResult(action, executed=False, paused=False)
             previous_channels = None
@@ -110,9 +110,41 @@ class RuntimeWorld:
                     self.body_ids,
                 )
                 self.handle = self.bridge.prepare(self.handle, action)
-                snapshot = self.evaluator.capture(scene, depsgraph, self.world_spec)
-                self.bridge.set_snapshot(self.handle, snapshot)
-                self.bridge.solve(self.handle, action)
+                if action.kind in (
+                    TimelineActionKind.RESET,
+                    TimelineActionKind.RESTORE_AND_REPLAY,
+                ):
+                    self.evaluator.reset()
+                sample_times = action.fixed_times
+                if (
+                    not sample_times
+                    and action.kind is not TimelineActionKind.ADVANCE
+                ):
+                    sample_times = (observed_time.seconds,)
+                for sample_time in sample_times:
+                    snapshot = self.evaluator.capture_at(
+                        scene,
+                        depsgraph,
+                        self.world_spec,
+                        sample_time,
+                    )
+                    self.bridge.set_snapshot(self.handle, snapshot)
+                    self.bridge.solve(
+                        self.handle,
+                        _single_step_action(action, sample_time),
+                    )
+                if not sample_times or not math.isclose(
+                    sample_times[-1],
+                    observed_time.seconds,
+                    rel_tol=1.0e-9,
+                    abs_tol=1.0e-12,
+                ):
+                    self.evaluator.restore_time(
+                        scene,
+                        depsgraph,
+                        self.world_spec,
+                        observed_time.seconds,
+                    )
                 poses = tuple(self.bridge.read_poses(self.handle, self.body_ids))
                 if len(poses) != len(self.body_ids):
                     raise RuntimeError(
@@ -125,6 +157,16 @@ class RuntimeWorld:
                 )
             except Exception as error:
                 self.timeline.restore_observation(saved_timeline)
+                self.evaluator.restore_state(saved_evaluator)
+                try:
+                    self.evaluator.restore_time(
+                        scene,
+                        depsgraph,
+                        self.world_spec,
+                        observed_time.seconds,
+                    )
+                except Exception:
+                    pass
                 if previous_channels is not None:
                     try:
                         self.pose_writer.restore(
@@ -308,3 +350,18 @@ def _copy_batch(batch: dict[str, object]) -> dict[str, object]:
         key: array(value.typecode, value) if isinstance(value, array) else value
         for key, value in batch.items()
     }
+
+
+def _single_step_action(
+    action: TimelineAction,
+    sample_time: float,
+) -> TimelineAction:
+    if not action.fixed_times:
+        return action
+    return TimelineAction(
+        kind=action.kind,
+        fixed_times=(sample_time,),
+        checkpoint=action.checkpoint,
+        authoritative=action.authoritative,
+        reason=action.reason,
+    )
