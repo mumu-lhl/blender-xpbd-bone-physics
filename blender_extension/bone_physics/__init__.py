@@ -8,6 +8,12 @@ from .model import (
     CrossLinkSpec,
     WorldSpec,
 )
+from .native import (
+    NativeUnavailableError,
+    NativeVersionError,
+    get_native,
+    load_native,
+)
 from .parameter_builder import NativeBuildBatch, compile_world_spec
 
 __all__ = [
@@ -17,6 +23,10 @@ __all__ = [
     "ChainSpec",
     "CrossLinkSpec",
     "NativeBuildBatch",
+    "NativeUnavailableError",
+    "NativeVersionError",
     "WorldSpec",
     "compile_world_spec",
+    "get_native",
+    "load_native",
 ]
