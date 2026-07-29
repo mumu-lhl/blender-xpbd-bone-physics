@@ -106,6 +106,13 @@ class BlenderRunnerTests(unittest.TestCase):
 
 
 class CommandReportTests(unittest.TestCase):
+    def test_native_job_installs_toolchain_file_components_explicitly(self) -> None:
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        native_job = workflow.split("  native-contract:", 1)[1].split(
+            "  blender-runtime:", 1
+        )[0]
+        self.assertIn("components: rustfmt, clippy", native_job)
+
     def test_discovery_arguments_are_compatible_with_python_311(self) -> None:
         self.assertEqual(
             unittest_arguments(Path("."), []),
