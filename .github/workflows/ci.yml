@@ -13,6 +13,43 @@ permissions:
   contents: read
 
 jobs:
+  python-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test minimum Python
+        id: python_min
+        continue-on-error: true
+        run: >-
+          python scripts/ci/run_python_tests.py
+          --exclude-prefix test_native_
+          --report-dir artifacts/python-3.11
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Test latest stable Python
+        id: python_latest
+        continue-on-error: true
+        run: >-
+          python scripts/ci/run_python_tests.py
+          --exclude-prefix test_native_
+          --report-dir artifacts/python-3.14
+      - name: Upload Python report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-test-report
+          path: artifacts/
+          if-no-files-found: error
+      - name: Enforce Python results
+        if: always()
+        run: |
+          test "${{ steps.python_min.outcome }}" = success
+          test "${{ steps.python_latest.outcome }}" = success
+
   rust-core:
     runs-on: ubuntu-latest
     steps:
@@ -29,7 +66,7 @@ jobs:
       - name: Measure scheduled Rust benchmarks
         if: github.event_name == 'schedule'
         shell: bash
-        run: cargo bench --workspace 2>&1 | tee artifacts/cargo-bench.log
+        run: cargo bench -p bone_physics_core 2>&1 | tee artifacts/cargo-bench.log
       - name: Upload Rust report
         if: always()
         uses: actions/upload-artifact@v4
@@ -43,4 +80,81 @@ jobs:
         with:
           name: rust-reference-report
           path: artifacts/rust-reference-*.json
+          if-no-files-found: error
+
+  native-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - name: Prepare native report directory
+        run: mkdir -p artifacts
+      - name: Install wheel builder
+        continue-on-error: true
+        run: python -m pip install maturin==1.14.1
+      - name: Build and test native contract
+        if: always()
+        run: >-
+          python scripts/ci/run_native_contract.py
+          --report-dir artifacts
+          --work-dir native-contract-work
+      - name: Upload native contract report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-contract-report
+          path: artifacts/
+          if-no-files-found: error
+      - name: Upload Linux native wheel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-wheel-linux
+          path: native-contract-work/dist/*.whl
+          if-no-files-found: error
+
+  blender-runtime:
+    needs: native-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare Blender report directory
+        run: mkdir -p artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-wheel-linux
+          path: native-wheel
+      - name: Cache Blender 5.2 LTS
+        uses: actions/cache@v4
+        with:
+          path: blender-runtime
+          key: blender-5.2.0-linux-x64-96f6c181
+      - name: Install pinned Blender
+        run: >-
+          python scripts/ci/install_blender.py
+          --destination blender-runtime
+          --report artifacts/blender-install.json
+      - name: Run Blender extension tests
+        shell: bash
+        run: |
+          blender="$(find blender-runtime -type f -name blender -print -quit)"
+          wheel="$(find native-wheel -type f -name '*.whl' -print -quit)"
+          python scripts/ci/run_blender_tests.py \
+            --blender "$blender" \
+            --wheel "$wheel" \
+            --report-dir artifacts
+      - name: Upload Blender runtime report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-runtime-report
+          path: artifacts/
           if-no-files-found: error

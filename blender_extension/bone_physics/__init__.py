@@ -21,6 +21,19 @@ from .scene_adapter import BlenderSceneAdapter, Pose
 from .runtime import NativeRuntimeBridge, ReentryGuard, RuntimeWorld
 from .timeline import TimelineAction, TimelineActionKind, TimelineState, TimelineTime
 
+
+def register() -> None:
+    """Blender extension lifecycle entry point.
+
+    Runtime worlds are attached explicitly by the authoring layer, so importing
+    or enabling the extension does not mutate the current scene.
+    """
+
+
+def unregister() -> None:
+    """Blender extension lifecycle exit point."""
+
+
 __all__ = [
     "AnalyticColliderSpec",
     "AnalyticShape",
@@ -46,4 +59,6 @@ __all__ = [
     "compile_world_spec",
     "get_native",
     "load_native",
+    "register",
+    "unregister",
 ]

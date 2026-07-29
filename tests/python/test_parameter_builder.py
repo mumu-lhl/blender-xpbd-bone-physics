@@ -1,6 +1,9 @@
 import unittest
 
-import bone_physics_native as native
+try:
+    import bone_physics_native as native
+except ModuleNotFoundError:
+    native = None
 
 from blender_extension.bone_physics.model import (
     BoneSpec,
@@ -97,13 +100,14 @@ class ParameterBuilderTests(unittest.TestCase):
         first = compile_world_spec(world)
         second = compile_world_spec(world)
         self.assertEqual(first.canonical_bytes(), second.canonical_bytes())
-        handle = native.build_world(
-            first.config,
-            first.bodies,
-            first.constraints,
-            first.filters,
-        )
-        self.addCleanup(native.destroy_world, handle)
+        if native is not None:
+            handle = native.build_world(
+                first.config,
+                first.bodies,
+                first.constraints,
+                first.filters,
+            )
+            self.addCleanup(native.destroy_world, handle)
 
     def test_compiler_is_byte_deterministic_and_emits_xyz_locks(self):
         root = bone(1, 0.0, 1.0)
@@ -151,6 +155,7 @@ class ParameterBuilderTests(unittest.TestCase):
         self.assertAlmostEqual(gravity[1], 5 / 12)
         self.assertAlmostEqual(gravity[2], 5 / 6)
 
+    @unittest.skipIf(native is None, "native bridge is tested in native-contract")
     def test_compiled_batch_is_accepted_by_the_native_bridge(self):
         root = bone(1, 0.0, 1.0)
         child = BoneSpec(

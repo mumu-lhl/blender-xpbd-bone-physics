@@ -1,6 +1,9 @@
 import unittest
 
-import bone_physics_native as native
+try:
+    import bone_physics_native as native
+except ModuleNotFoundError:
+    native = None
 
 from blender_extension.bone_physics.model import BoneSpec, WorldSpec
 from blender_extension.bone_physics.parameter_builder import compile_world_spec
@@ -197,6 +200,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(result.paused)
         self.assertEqual(events, [])
 
+    @unittest.skipIf(native is None, "native bridge is tested in native-contract")
     def test_native_runtime_bridge_batches_snapshot_solve_read_and_resume(self):
         bone = BoneSpec(
             id=1,
