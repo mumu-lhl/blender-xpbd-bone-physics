@@ -13,6 +13,9 @@ pub enum SolverError {
 
     #[error("body {0:?} contains non-finite state")]
     NonFiniteState(BodyId),
+
+    #[error("the solver world is paused after a failed substep")]
+    WorldPaused,
 }
 
 impl SolverError {

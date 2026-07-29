@@ -1,5 +1,5 @@
-use crate::error::validate_finite;
 use crate::SolverError;
+use crate::error::validate_finite;
 
 const STEP_RATIO_EPSILON: f64 = 1.0e-5;
 
