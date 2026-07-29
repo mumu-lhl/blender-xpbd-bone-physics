@@ -5,11 +5,17 @@ mod world;
 
 use std::sync::{Mutex, OnceLock};
 
-use batch::{decode_analytic_colliders, decode_targets, decode_world, write_transforms};
-use bone_physics_core::{QualityPolicy, SolverConfig, SolverError, SolverWorld};
+use batch::{
+    decode_analytic_colliders, decode_mesh_topology, decode_mesh_vertices, decode_targets,
+    decode_world, write_transforms,
+};
+use bone_physics_core::{
+    MeshId, MeshUpdate, QualityPolicy, SolverConfig, SolverError, SolverWorld,
+};
 use error::{
-    BonePhysicsInputError, BonePhysicsInternalError, BonePhysicsStateError, catch_panic,
-    input_error, state_error,
+    BonePhysicsInputError, BonePhysicsInternalError, BonePhysicsStateError,
+    BonePhysicsTopologyInvalidatedError, catch_panic, input_error, state_error,
+    topology_invalidated_error,
 };
 use glam::Vec3;
 use pyo3::prelude::*;
@@ -167,6 +173,73 @@ fn set_analytic_colliders(
 }
 
 #[pyfunction]
+fn set_mesh_topology(
+    py: Python<'_>,
+    handle: u64,
+    mesh_id: u32,
+    topology_batch: &Bound<'_, PyAny>,
+) -> PyResult<u64> {
+    catch_panic(|| {
+        let mesh = decode_mesh_topology(py, mesh_id, topology_batch)?;
+        lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| world.set_mesh(mesh))
+            .map_err(state_error)?
+            .map_err(operation_error)
+    })
+}
+
+#[pyfunction]
+fn update_mesh_vertices(
+    py: Python<'_>,
+    handle: u64,
+    mesh_id: u32,
+    previous: &Bound<'_, PyAny>,
+    current: &Bound<'_, PyAny>,
+    expected_hash: u64,
+) -> PyResult<&'static str> {
+    catch_panic(|| {
+        let id = MeshId::new(mesh_id);
+        let (vertex_count, actual_hash) = lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| {
+                (world.mesh_vertex_count(id), world.mesh_topology_hash(id))
+            })
+            .map_err(state_error)?;
+        let vertex_count =
+            vertex_count.ok_or_else(|| input_error(format!("mesh ID {mesh_id} does not exist")))?;
+        let actual_hash =
+            actual_hash.ok_or_else(|| input_error(format!("mesh ID {mesh_id} does not exist")))?;
+        if expected_hash != actual_hash {
+            return Err(topology_invalidated_error(format!(
+                "mesh topology hash mismatch: expected {actual_hash}, received {expected_hash}"
+            )));
+        }
+        let (previous, current) = decode_mesh_vertices(py, previous, current, vertex_count)?;
+        let update = lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| {
+                world.update_mesh_vertices(id, previous, current, expected_hash)
+            })
+            .map_err(state_error)?
+            .map_err(operation_error)?;
+        Ok(match update {
+            MeshUpdate::Refit => "refit",
+            MeshUpdate::Rebuilt => "rebuilt",
+        })
+    })
+}
+
+#[pyfunction]
+fn remove_mesh(handle: u64, mesh_id: u32) -> PyResult<()> {
+    catch_panic(|| {
+        lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| {
+                world.remove_mesh(MeshId::new(mesh_id))
+            })
+            .map_err(state_error)?
+            .map_err(operation_error)
+    })
+}
+
+#[pyfunction]
 fn advance(
     py: Python<'_>,
     handle: u64,
@@ -204,11 +277,12 @@ fn read_transforms(
 #[pyfunction]
 fn read_diagnostics(py: Python<'_>, handle: u64) -> PyResult<Py<PyDict>> {
     catch_panic(|| {
-        let (body_count, analytic_collider_count, summary) = lock_worlds()?
+        let (body_count, analytic_collider_count, mesh_count, summary) = lock_worlds()?
             .with_world_mut(WorldHandle::from_raw(handle), |world| {
                 (
                     world.body_count(),
                     world.analytic_collider_count(),
+                    world.mesh_count(),
                     world.last_summary(),
                 )
             })
@@ -216,6 +290,7 @@ fn read_diagnostics(py: Python<'_>, handle: u64) -> PyResult<Py<PyDict>> {
         let result = PyDict::new(py);
         result.set_item("body_count", body_count)?;
         result.set_item("analytic_collider_count", analytic_collider_count)?;
+        result.set_item("mesh_count", mesh_count)?;
         add_summary(&result, summary)?;
         Ok(result.unbind())
     })
@@ -274,6 +349,10 @@ fn bone_physics_native(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult
         py.get_type::<BonePhysicsStateError>(),
     )?;
     module.add(
+        "BonePhysicsTopologyInvalidatedError",
+        py.get_type::<BonePhysicsTopologyInvalidatedError>(),
+    )?;
+    module.add(
         "BonePhysicsInternalError",
         py.get_type::<BonePhysicsInternalError>(),
     )?;
@@ -284,6 +363,9 @@ fn bone_physics_native(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult
     module.add_function(wrap_pyfunction!(resume_world, module)?)?;
     module.add_function(wrap_pyfunction!(set_animation_targets, module)?)?;
     module.add_function(wrap_pyfunction!(set_analytic_colliders, module)?)?;
+    module.add_function(wrap_pyfunction!(set_mesh_topology, module)?)?;
+    module.add_function(wrap_pyfunction!(update_mesh_vertices, module)?)?;
+    module.add_function(wrap_pyfunction!(remove_mesh, module)?)?;
     module.add_function(wrap_pyfunction!(advance, module)?)?;
     module.add_function(wrap_pyfunction!(read_transforms, module)?)?;
     module.add_function(wrap_pyfunction!(read_diagnostics, module)?)?;

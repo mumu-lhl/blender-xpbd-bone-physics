@@ -5,7 +5,8 @@ try:
 except ModuleNotFoundError:
     native = None
 
-from blender_extension.bone_physics.model import BoneSpec, WorldSpec
+from blender_extension.bone_physics.mesh_builder import MeshSource, build_collision_surface
+from blender_extension.bone_physics.model import BoneSpec, CollisionSurfaceSpec, WorldSpec
 from blender_extension.bone_physics.parameter_builder import compile_world_spec
 from blender_extension.bone_physics.prephysics_eval import PrePhysicsSnapshot, TargetPose
 from blender_extension.bone_physics.runtime import NativeRuntimeBridge, RuntimeWorld
@@ -294,7 +295,8 @@ class RuntimeTests(unittest.TestCase):
             local_head=(0.0, 0.0, 0.0),
             local_tail=(0.0, 1.0, 0.0),
         )
-        world = WorldSpec(bones=(bone,))
+        surface = CollisionSurfaceSpec(id=501, object_name="Body")
+        world = WorldSpec(bones=(bone,), collision_surfaces=(surface,))
         compiled = compile_world_spec(world)
         bridge = NativeRuntimeBridge(
             native,
@@ -309,6 +311,15 @@ class RuntimeTests(unittest.TestCase):
             target_poses=(TargetPose(1, pose(0.0), pose(0.0)),),
             collider_poses=(),
             object_to_simulation=IDENTITY,
+            mesh_batches=(
+                build_collision_surface(
+                    MeshSource(
+                        vertices=((-2, -0.2, -2), (2, -0.2, -2), (0, -0.2, 2)),
+                        polygons=((0, 1, 2),),
+                    ),
+                    surface,
+                ),
+            ),
         )
         action = TimelineAction(
             kind=TimelineActionKind.ADVANCE,
@@ -324,6 +335,7 @@ class RuntimeTests(unittest.TestCase):
         bridge.resume(handle)
 
         self.assertEqual(len(poses), 1)
+        self.assertEqual(native.read_diagnostics(handle)["mesh_count"], 1)
         self.assertAlmostEqual(
             sum(component * component for component in poses[0].rotation),
             1.0,

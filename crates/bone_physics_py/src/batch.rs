@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use bone_physics_core::{
     AnalyticProxy, AnalyticShape, AngularLimit, BodyId, BodyInit, BoneBodyDesc, Capsule,
-    CapsuleColliderDesc, ColliderId, CollisionFilter, ConstraintId, ContactMaterial, EulerOrder,
-    PersistentConstraint, Pose, SolverError, SwingTwistLimit, Velocity, XyzLimit,
+    CapsuleColliderDesc, ColliderId, CollisionFilter, ConstraintId, ContactMaterial, DeformingMesh,
+    EulerOrder, MeshId, MeshTopology, PersistentConstraint, Pose, RegionId, SolverError,
+    SwingTwistLimit, Velocity, XyzLimit,
 };
 use glam::{Quat, Vec3};
 use pyo3::buffer::{Element, PyBuffer};
@@ -62,7 +63,19 @@ where
     T: Element,
 {
     let object = item(batch, key)?;
-    let view = Bound::<PyMemoryView>::try_from(&object)
+    owned_value_buffer(py, &object, key, dtype)
+}
+
+fn owned_value_buffer<T>(
+    py: Python<'_>,
+    object: &Bound<'_, PyAny>,
+    key: &str,
+    dtype: &str,
+) -> PyResult<Vec<T>>
+where
+    T: Element,
+{
+    let view = Bound::<PyMemoryView>::try_from(object)
         .map_err(|_| input_error(format!("{key} must expose a {dtype} buffer")))?;
     let format = view
         .getattr("format")
@@ -91,11 +104,152 @@ where
     if byte_count == 0 {
         return Ok(Vec::new());
     }
-    let buffer = PyBuffer::<T>::get(&object)
+    let buffer = PyBuffer::<T>::get(object)
         .map_err(|_| input_error(format!("{key} must expose a {dtype} buffer")))?;
     buffer
         .to_vec(py)
         .map_err(|error| input_error(format!("could not copy {key}: {error}")))
+}
+
+pub fn decode_mesh_topology(
+    py: Python<'_>,
+    mesh_id: u32,
+    batch: &Bound<'_, PyAny>,
+) -> PyResult<DeformingMesh> {
+    if mesh_id == 0 {
+        return Err(input_error("mesh ID must be greater than zero"));
+    }
+    let vertex_count = usize_scalar(batch, "vertex_count")?;
+    let declared_vertex_count =
+        u32::try_from(vertex_count).map_err(|_| input_error("mesh vertex count exceeds u32"))?;
+    let triangle_values = owned_buffer::<u32>(py, batch, "triangles", "u32")?;
+    if !triangle_values.len().is_multiple_of(3) {
+        return Err(input_error(
+            "mesh triangle buffer must contain exactly three indices per triangle",
+        ));
+    }
+    let triangles = triangle_values
+        .chunks_exact(3)
+        .map(|row| [row[0], row[1], row[2]])
+        .collect::<Vec<_>>();
+    let region_values = owned_buffer::<u32>(py, batch, "regions", "u32")?;
+    if region_values.len() != triangles.len() {
+        return Err(input_error(format!(
+            "mesh region buffer must contain {} items, received {}",
+            triangles.len(),
+            region_values.len()
+        )));
+    }
+    if region_values.contains(&0) {
+        return Err(input_error("mesh region IDs must be greater than zero"));
+    }
+    let vertex_values = owned_buffer::<f32>(py, batch, "vertices", "f32")?;
+    let expected_values = vertex_count
+        .checked_mul(3)
+        .ok_or_else(|| input_error("mesh vertex value count overflow"))?;
+    if vertex_values.len() != expected_values {
+        return Err(input_error(format!(
+            "mesh vertices must contain {expected_values} f32 items, received {}",
+            vertex_values.len()
+        )));
+    }
+    if vertex_values.iter().any(|value| !value.is_finite()) {
+        return Err(input_error("mesh vertex values must all be finite"));
+    }
+    let positions = vertex_values
+        .chunks_exact(3)
+        .map(|row| Vec3::new(row[0], row[1], row[2]))
+        .collect();
+    let thickness = item(batch, "thickness")?
+        .extract::<f32>()
+        .map_err(input_error)?;
+    let closed_hint = item(batch, "closed_hint")?
+        .extract::<bool>()
+        .map_err(input_error)?;
+
+    let ignore_body_ids = owned_buffer::<u32>(py, batch, "ignore_body_ids", "u32")?;
+    reject_duplicates("mesh ignored body", &ignore_body_ids).map_err(input_error)?;
+    let ignore_offsets = owned_buffer::<u32>(py, batch, "ignore_region_offsets", "u32")?;
+    let ignore_region_ids = owned_buffer::<u32>(py, batch, "ignore_region_ids", "u32")?;
+    require_lengths(
+        "mesh ownership",
+        ignore_body_ids.len() + 1,
+        &[("ignore_region_offsets", ignore_offsets.len())],
+    )?;
+    validate_offsets(
+        "ignore_region_offsets",
+        &ignore_offsets,
+        ignore_region_ids.len(),
+    )
+    .map_err(input_error)?;
+    if ignore_body_ids.contains(&0) || ignore_region_ids.contains(&0) {
+        return Err(input_error(
+            "mesh ownership body and region IDs must be greater than zero",
+        ));
+    }
+    let ignores = ignore_body_ids
+        .iter()
+        .enumerate()
+        .map(|(index, body)| {
+            (
+                BodyId::new(*body),
+                ignore_region_ids
+                    [ignore_offsets[index] as usize..ignore_offsets[index + 1] as usize]
+                    .iter()
+                    .copied()
+                    .map(RegionId::new)
+                    .collect(),
+            )
+        })
+        .collect();
+
+    let mut mesh = DeformingMesh::build(
+        MeshId::new(mesh_id),
+        MeshTopology {
+            vertex_count: declared_vertex_count,
+            triangles,
+            triangle_regions: region_values.into_iter().map(RegionId::new).collect(),
+            closed_hint,
+        },
+        positions,
+        thickness,
+    )
+    .map_err(input_error)?;
+    mesh.set_body_region_ignores(ignores).map_err(input_error)?;
+    Ok(mesh)
+}
+
+pub fn decode_mesh_vertices(
+    py: Python<'_>,
+    previous: &Bound<'_, PyAny>,
+    current: &Bound<'_, PyAny>,
+    vertex_count: usize,
+) -> PyResult<(Vec<Vec3>, Vec<Vec3>)> {
+    let previous = owned_value_buffer::<f32>(py, previous, "previous", "f32")?;
+    let current = owned_value_buffer::<f32>(py, current, "current", "f32")?;
+    let expected = vertex_count
+        .checked_mul(3)
+        .ok_or_else(|| input_error("mesh vertex value count overflow"))?;
+    for (name, values) in [("previous", &previous), ("current", &current)] {
+        if values.len() != expected {
+            return Err(input_error(format!(
+                "mesh {name} vertices must contain {expected} f32 items, received {}",
+                values.len()
+            )));
+        }
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err(input_error(format!(
+                "mesh {name} vertex values must all be finite"
+            )));
+        }
+    }
+    let convert = |values: Vec<f32>| {
+        values
+            .chunks_exact(3)
+            .map(|row| Vec3::new(row[0], row[1], row[2]))
+            .collect()
+    };
+    Ok((convert(previous), convert(current)))
 }
 
 fn rows(values: &[f32], columns: usize, expected: usize, name: &str) -> PyResult<usize> {

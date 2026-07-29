@@ -107,6 +107,32 @@ class MeshBuilderTests(unittest.TestCase):
         self.assertEqual(updated.topology_fingerprint, template.topology_fingerprint)
         self.assertEqual(updated.source_vertex_indices, template.source_vertex_indices)
 
+    def test_unrelated_material_rename_does_not_invalidate_collision_topology(self):
+        policy = CollisionSurfaceSpec(
+            id=11,
+            object_name="Body",
+            excluded_materials=("eyes",),
+        )
+        skin = MeshSource(
+            vertices=((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+            polygons=((0, 1, 2),),
+            polygon_materials=("skin",),
+        )
+        renamed = MeshSource(
+            vertices=skin.vertices,
+            polygons=skin.polygons,
+            polygon_materials=("skin.renamed",),
+        )
+
+        first = build_collision_surface(skin, policy)
+        second = build_collision_surface(renamed, policy)
+
+        self.assertEqual(
+            first.source_topology_fingerprint,
+            second.source_topology_fingerprint,
+        )
+        self.assertEqual(first.topology_fingerprint, second.topology_fingerprint)
+
 
 if __name__ == "__main__":
     unittest.main()

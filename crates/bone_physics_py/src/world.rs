@@ -1,6 +1,6 @@
 use bone_physics_core::{
-    AnalyticProxy, BodyId, ColliderId, FixedClock, QualityPolicy, SolverError, SolverWorld,
-    StepDiagnostics, StepOptions,
+    AnalyticProxy, BodyId, ColliderId, DeformingMesh, FixedClock, MeshId, MeshUpdate,
+    QualityPolicy, SolverError, SolverWorld, StepDiagnostics, StepOptions,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -98,6 +98,36 @@ impl NativeWorld {
         self.solver.set_analytic_proxies(colliders)
     }
 
+    pub fn set_mesh(&mut self, mesh: DeformingMesh) -> Result<u64, SolverError> {
+        let topology_hash = mesh.validation_report().topology_hash;
+        self.solver.set_mesh(mesh)?;
+        Ok(topology_hash)
+    }
+
+    pub fn update_mesh_vertices(
+        &mut self,
+        id: MeshId,
+        previous: Vec<glam::Vec3>,
+        current: Vec<glam::Vec3>,
+        expected_hash: u64,
+    ) -> Result<MeshUpdate, SolverError> {
+        let mesh = self
+            .solver
+            .mesh(id)
+            .ok_or_else(|| SolverError::invalid_value("mesh_id", id.get()))?;
+        if mesh.validation_report().topology_hash != expected_hash {
+            return Err(SolverError::invalid_value(
+                "mesh_topology_hash",
+                expected_hash as f64,
+            ));
+        }
+        self.solver.update_mesh_vertices(id, previous, current)
+    }
+
+    pub fn remove_mesh(&mut self, id: MeshId) -> Result<(), SolverError> {
+        self.solver.remove_mesh(id)
+    }
+
     #[must_use]
     pub fn transform_values(&self) -> Vec<f32> {
         let mut output = Vec::with_capacity(self.body_ids.len() * 7);
@@ -118,6 +148,25 @@ impl NativeWorld {
     #[must_use]
     pub fn analytic_collider_count(&self) -> usize {
         self.solver.analytic_proxy_count()
+    }
+
+    #[must_use]
+    pub fn mesh_count(&self) -> usize {
+        self.solver.mesh_count()
+    }
+
+    #[must_use]
+    pub fn mesh_vertex_count(&self, id: MeshId) -> Option<usize> {
+        self.solver
+            .mesh(id)
+            .map(|mesh| mesh.current_positions().len())
+    }
+
+    #[must_use]
+    pub fn mesh_topology_hash(&self, id: MeshId) -> Option<u64> {
+        self.solver
+            .mesh(id)
+            .map(|mesh| mesh.validation_report().topology_hash)
     }
 
     #[must_use]

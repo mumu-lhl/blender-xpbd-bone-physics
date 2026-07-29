@@ -138,6 +138,42 @@ fn mesh_ground(id: u32, previous_offset: Vec3, current_offset: Vec3) -> Deformin
 }
 
 #[test]
+fn body_region_ownership_prevents_self_collision_without_hiding_other_regions() {
+    let material = ContactMaterial::try_new(0.0, 0.0).unwrap();
+    let mut self_region = mesh_ground(30, Vec3::ZERO, Vec3::ZERO);
+    self_region
+        .set_body_region_ignores(vec![(BodyId::new(1), vec![RegionId::new(1)])])
+        .unwrap();
+    let mut hidden = world(
+        Vec3::ZERO,
+        vec![body(1, Vec3::new(0.0, 0.24, 0.0), Vec3::ZERO, true)],
+    );
+    hidden
+        .set_colliders(vec![sphere(10, 1, Vec3::ZERO, material)])
+        .unwrap();
+    hidden.set_meshes(vec![self_region]).unwrap();
+
+    let hidden_diagnostics = hidden.substep(DT, 1.0, options()).unwrap();
+    assert_eq!(hidden_diagnostics.generated_contacts, 0);
+
+    let mut visible = world(
+        Vec3::ZERO,
+        vec![body(2, Vec3::new(0.0, 0.24, 0.0), Vec3::ZERO, true)],
+    );
+    visible
+        .set_colliders(vec![sphere(20, 2, Vec3::ZERO, material)])
+        .unwrap();
+    let mut other_region = mesh_ground(30, Vec3::ZERO, Vec3::ZERO);
+    other_region
+        .set_body_region_ignores(vec![(BodyId::new(1), vec![RegionId::new(1)])])
+        .unwrap();
+    visible.set_meshes(vec![other_region]).unwrap();
+
+    let visible_diagnostics = visible.substep(DT, 1.0, options()).unwrap();
+    assert!(visible_diagnostics.generated_contacts > 0);
+}
+
+#[test]
 fn analytic_proxy_contact_is_solved_and_reported() {
     let material = ContactMaterial::try_new(0.8, 0.0).unwrap();
     let mut world = world(

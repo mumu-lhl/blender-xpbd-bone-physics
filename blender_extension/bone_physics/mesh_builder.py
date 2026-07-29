@@ -84,6 +84,7 @@ class CollisionMeshBatch:
     current_vertices: tuple[Vec3, ...]
     regions: tuple[int, ...]
     thickness: float
+    body_region_ignores: tuple[tuple[int, tuple[int, ...]], ...]
     topology_fingerprint: str
     deformation_fingerprint: str
     source_topology_fingerprint: str
@@ -133,6 +134,7 @@ def build_collision_surface(
             current_vertices=current_vertices,
             regions=template.regions,
             thickness=policy.thickness,
+            body_region_ignores=policy.body_region_ignores,
             topology_fingerprint=template.topology_fingerprint,
             deformation_fingerprint=_fingerprint_vertices(
                 previous_vertices,
@@ -198,7 +200,11 @@ def build_collision_surface(
         triangles=tuple(triangles),
         closed_hint=policy.closed_hint,
     )
-    topology_fingerprint = _fingerprint_topology(topology, tuple(regions))
+    topology_fingerprint = _fingerprint_topology(
+        topology,
+        tuple(regions),
+        policy,
+    )
     deformation_fingerprint = _fingerprint_vertices(
         previous_vertices,
         current_vertices,
@@ -210,6 +216,7 @@ def build_collision_surface(
         current_vertices=current_vertices,
         regions=tuple(regions),
         thickness=policy.thickness,
+        body_region_ignores=policy.body_region_ignores,
         topology_fingerprint=topology_fingerprint,
         deformation_fingerprint=deformation_fingerprint,
         source_topology_fingerprint=source_topology_fingerprint,
@@ -387,11 +394,17 @@ def _degenerate(triangle: tuple[int, int, int], vertices: tuple[Vec3, ...]) -> b
 def _fingerprint_topology(
     topology: CollisionMeshTopology,
     regions: tuple[int, ...],
+    policy: CollisionSurfaceSpec,
 ) -> str:
     digest = hashlib.sha256()
     digest.update(struct.pack("<I?", topology.vertex_count, topology.closed_hint))
+    digest.update(struct.pack("<d", policy.thickness))
     for triangle, region in zip(topology.triangles, regions):
         digest.update(struct.pack("<IIII", *triangle, region))
+    for body_id, ignored_regions in policy.body_region_ignores:
+        digest.update(struct.pack("<II", body_id, len(ignored_regions)))
+        for region in ignored_regions:
+            digest.update(struct.pack("<I", region))
     return digest.hexdigest()
 
 
@@ -411,6 +424,9 @@ def _fingerprint_source(
 ) -> str:
     digest = hashlib.sha256()
     digest.update(struct.pack("<I", len(source.vertices)))
+    digest.update(struct.pack("<d?", policy.simplify_max_error, policy.closed_hint))
+    excluded_materials = set(policy.excluded_materials)
+    excluded_regions = set(policy.excluded_region_ids)
     for index, polygon in enumerate(source.polygons):
         digest.update(struct.pack("<I", len(polygon)))
         for vertex in polygon:
@@ -426,9 +442,12 @@ def _fingerprint_source(
             else None
         )
         digest.update(struct.pack("<I", region))
-        encoded = b"" if material is None else material.encode("utf-8")
-        digest.update(struct.pack("<I", len(encoded)))
-        digest.update(encoded)
+        digest.update(
+            struct.pack(
+                "<?",
+                material in excluded_materials or region in excluded_regions,
+            )
+        )
     return digest.hexdigest()
 
 

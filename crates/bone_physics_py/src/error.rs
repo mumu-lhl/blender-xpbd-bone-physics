@@ -6,6 +6,11 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 create_exception!(bone_physics_native, BonePhysicsInputError, PyValueError);
+create_exception!(
+    bone_physics_native,
+    BonePhysicsTopologyInvalidatedError,
+    PyRuntimeError
+);
 create_exception!(bone_physics_native, BonePhysicsStateError, PyRuntimeError);
 create_exception!(
     bone_physics_native,
@@ -19,6 +24,10 @@ pub(crate) fn input_error(error: impl std::fmt::Display) -> PyErr {
 
 pub(crate) fn state_error(error: impl std::fmt::Display) -> PyErr {
     BonePhysicsStateError::new_err(error.to_string())
+}
+
+pub(crate) fn topology_invalidated_error(error: impl std::fmt::Display) -> PyErr {
+    BonePhysicsTopologyInvalidatedError::new_err(error.to_string())
 }
 
 fn panic_message(payload: &(dyn Any + Send)) -> &str {

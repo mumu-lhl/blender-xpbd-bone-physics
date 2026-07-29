@@ -220,6 +220,7 @@ class NativeRuntimeBridge:
         self.restore_checkpoint = restore_checkpoint
         self.last_snapshot_time: dict[int, float] = {}
         self.last_diagnostics: dict[int, object] = {}
+        self.mesh_topologies: dict[tuple[int, int], tuple[str, int]] = {}
 
     def create_world(self) -> int:
         handle = self.native.build_world(
@@ -243,6 +244,7 @@ class NativeRuntimeBridge:
                 self.native.destroy_world(replacement)
                 raise
             self.last_snapshot_time.pop(handle, None)
+            self._forget_meshes(handle)
             return replacement
         if action.kind is TimelineActionKind.RESTORE_AND_REPLAY:
             if self.restore_checkpoint is None:
@@ -251,6 +253,7 @@ class NativeRuntimeBridge:
                 )
             replacement = self.restore_checkpoint(action.checkpoint, handle)
             self.last_snapshot_time.pop(handle, None)
+            self._forget_meshes(handle)
             return replacement
         return handle
 
@@ -309,6 +312,32 @@ class NativeRuntimeBridge:
                 )
                 values[start + 7 : start + 10] = array("f", velocity)
         self.native.set_analytic_colliders(handle, analytic)
+        for mesh in snapshot.mesh_batches:
+            key = (handle, mesh.mesh_id)
+            installed = self.mesh_topologies.get(key)
+            if installed is None or installed[0] != mesh.topology_fingerprint:
+                topology_hash = self.native.set_mesh_topology(
+                    handle,
+                    mesh.mesh_id,
+                    _mesh_topology_batch(mesh),
+                )
+                self.mesh_topologies[key] = (
+                    mesh.topology_fingerprint,
+                    topology_hash,
+                )
+            else:
+                topology_hash = installed[1]
+            update = self.native.update_mesh_vertices(
+                handle,
+                mesh.mesh_id,
+                _vertex_buffer(mesh.previous_vertices),
+                _vertex_buffer(mesh.current_vertices),
+                topology_hash,
+            )
+            if update != "refit":
+                raise RuntimeError(
+                    f"mesh {mesh.mesh_id} update unexpectedly returned {update!r}"
+                )
         self.last_snapshot_time[handle] = snapshot.time
 
     def solve(self, handle: int, action: TimelineAction) -> None:
@@ -344,12 +373,45 @@ class NativeRuntimeBridge:
     def resume(self, handle: int) -> None:
         self.native.resume_world(handle)
 
+    def _forget_meshes(self, handle: int) -> None:
+        stale = [key for key in self.mesh_topologies if key[0] == handle]
+        for key in stale:
+            del self.mesh_topologies[key]
+
 
 def _copy_batch(batch: dict[str, object]) -> dict[str, object]:
     return {
         key: array(value.typecode, value) if isinstance(value, array) else value
         for key, value in batch.items()
     }
+
+
+def _mesh_topology_batch(mesh) -> dict[str, object]:
+    ignore_body_ids = array("I")
+    ignore_region_offsets = array("I", [0])
+    ignore_region_ids = array("I")
+    for body_id, regions in mesh.body_region_ignores:
+        ignore_body_ids.append(body_id)
+        ignore_region_ids.extend(regions)
+        ignore_region_offsets.append(len(ignore_region_ids))
+    return {
+        "vertex_count": mesh.topology.vertex_count,
+        "triangles": array(
+            "I",
+            (index for triangle in mesh.topology.triangles for index in triangle),
+        ),
+        "regions": array("I", mesh.regions),
+        "vertices": _vertex_buffer(mesh.previous_vertices),
+        "thickness": mesh.thickness,
+        "closed_hint": mesh.topology.closed_hint,
+        "ignore_body_ids": ignore_body_ids,
+        "ignore_region_offsets": ignore_region_offsets,
+        "ignore_region_ids": ignore_region_ids,
+    }
+
+
+def _vertex_buffer(vertices) -> array:
+    return array("f", (value for vertex in vertices for value in vertex))
 
 
 def _single_step_action(

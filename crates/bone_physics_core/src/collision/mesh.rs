@@ -8,7 +8,7 @@ use parry3d::partitioning::{Bvh, BvhBuildStrategy, BvhWorkspace};
 use crate::error::validate_nonnegative;
 use crate::pose::validate_vec3;
 use crate::{
-    CapsuleCollider, MeshId, MovingTriangle, RegionId, SolverError, TriangleFeature,
+    BodyId, CapsuleCollider, MeshId, MovingTriangle, RegionId, SolverError, TriangleFeature,
     TriangleFeatureOwner, TriangleFeatureOwners, TriangleId,
 };
 
@@ -91,6 +91,7 @@ pub struct DeformingMesh {
     report: MeshValidationReport,
     active_triangles: Vec<TriangleId>,
     feature_owners: Vec<TriangleFeatureOwners>,
+    body_region_ignores: BTreeMap<BodyId, Vec<RegionId>>,
     bvh: Bvh,
     bvh_workspace: BvhWorkspace,
 }
@@ -107,6 +108,7 @@ impl core::fmt::Debug for DeformingMesh {
             .field("report", &self.report)
             .field("active_triangles", &self.active_triangles)
             .field("feature_owners", &self.feature_owners)
+            .field("body_region_ignores", &self.body_region_ignores)
             .field("bvh", &self.bvh)
             .finish_non_exhaustive()
     }
@@ -153,6 +155,7 @@ impl DeformingMesh {
             report,
             active_triangles,
             feature_owners,
+            body_region_ignores: BTreeMap::new(),
             bvh,
             bvh_workspace: BvhWorkspace::default(),
         })
@@ -181,6 +184,42 @@ impl DeformingMesh {
         self.previous_positions = previous;
         self.current_positions = current;
         Ok(MeshUpdate::Refit)
+    }
+
+    pub fn set_body_region_ignores(
+        &mut self,
+        ignores: Vec<(BodyId, Vec<RegionId>)>,
+    ) -> Result<(), SolverError> {
+        let mut validated = BTreeMap::new();
+        for (body, mut regions) in ignores {
+            regions.sort_unstable();
+            if let Some(duplicate) = regions.windows(2).find(|pair| pair[0] == pair[1]) {
+                return Err(SolverError::DuplicateId {
+                    kind: "mesh ignored region",
+                    id: duplicate[0].get(),
+                });
+            }
+            if validated.insert(body, regions).is_some() {
+                return Err(SolverError::DuplicateId {
+                    kind: "mesh ignored body",
+                    id: body.get(),
+                });
+            }
+        }
+        self.body_region_ignores = validated;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn body_sees_region(&self, body: BodyId, region: RegionId) -> bool {
+        self.body_region_ignores
+            .get(&body)
+            .is_none_or(|regions| regions.binary_search(&region).is_err())
+    }
+
+    #[must_use]
+    pub fn body_region_ignores(&self) -> &BTreeMap<BodyId, Vec<RegionId>> {
+        &self.body_region_ignores
     }
 
     pub fn query_aabb(&self, minimum: Vec3, maximum: Vec3) -> Result<Vec<TriangleId>, SolverError> {

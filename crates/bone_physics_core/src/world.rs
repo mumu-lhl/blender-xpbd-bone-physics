@@ -442,6 +442,48 @@ impl SolverWorld {
         self.meshes.len()
     }
 
+    pub fn set_mesh(&mut self, mesh: DeformingMesh) -> Result<(), SolverError> {
+        let id = mesh.id();
+        let mut meshes = core::mem::take(&mut self.meshes);
+        match meshes.binary_search_by_key(&id, DeformingMesh::id) {
+            Ok(index) => meshes[index] = mesh,
+            Err(index) => meshes.insert(index, mesh),
+        }
+        self.set_meshes(meshes)
+    }
+
+    pub fn update_mesh_vertices(
+        &mut self,
+        id: MeshId,
+        previous: Vec<Vec3>,
+        current: Vec<Vec3>,
+    ) -> Result<crate::MeshUpdate, SolverError> {
+        let index = self
+            .meshes
+            .binary_search_by_key(&id, DeformingMesh::id)
+            .map_err(|_| SolverError::invalid_value("mesh_id", id.get()))?;
+        self.meshes[index].update_vertices(previous, current)
+    }
+
+    pub fn remove_mesh(&mut self, id: MeshId) -> Result<(), SolverError> {
+        let index = self
+            .meshes
+            .binary_search_by_key(&id, DeformingMesh::id)
+            .map_err(|_| SolverError::invalid_value("mesh_id", id.get()))?;
+        self.meshes.remove(index);
+        self.cached_mesh_contacts
+            .retain(|cached| cached.key.mesh != id);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn mesh(&self, id: MeshId) -> Option<&DeformingMesh> {
+        self.meshes
+            .binary_search_by_key(&id, DeformingMesh::id)
+            .ok()
+            .map(|index| &self.meshes[index])
+    }
+
     #[must_use]
     pub fn cached_contacts(&self) -> Vec<(ContactKey, CachedContact)> {
         self.cached_contacts.clone()
@@ -1298,6 +1340,10 @@ impl SolverWorld {
                             normal: cached.contact.normal,
                         });
                     let triangle = mesh.moving_triangle(triangle_id, dt)?;
+                    if !mesh.body_sees_region(collider.body, triangle.region) {
+                        self.failure_hint = None;
+                        continue;
+                    }
                     if let Some(contact) = capsule_triangle_contact(collider, &triangle, history)? {
                         raw.push(contact);
                     }
@@ -2348,6 +2394,10 @@ impl SolverWorld {
                         ));
                         let mut triangle =
                             mesh.moving_triangle(triangle_id, self.config.fixed_dt)?;
+                        if !mesh.body_sees_region(collider.body, triangle.region) {
+                            self.failure_hint = None;
+                            continue;
+                        }
                         triangle.velocities = [Vec3::ZERO; 3];
                         let history = self
                             .cached_mesh_contacts
@@ -2537,6 +2587,7 @@ fn mesh_metadata_unchanged(
             if previous.validation_report().topology_hash
                 == current.validation_report().topology_hash
                 && previous.thickness() == current.thickness()
+                && previous.body_region_ignores() == current.body_region_ignores()
     )
 }
 
