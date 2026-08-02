@@ -30,6 +30,8 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), second.read_bytes())
             report = verify(first, expected_platform="linux-x86_64")
             self.assertEqual(report["native_count"], 1)
+            self.assertIn("module.py", report["files"])
+            self.assertNotIn("blender_extension/module.py", report["files"])
 
     def test_verifier_rejects_platform_without_matching_native_module(self):
         with tempfile.TemporaryDirectory() as directory:
