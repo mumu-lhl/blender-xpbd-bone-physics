@@ -66,7 +66,10 @@ def build_v1_acceptance(
     reports = list(platform_reports)
     for report in reports:
         _validate_platform(report, commit)
-    if {report.get("platform") for report in reports} != set(SUPPORTED_PLATFORMS):
+    platforms = [report.get("platform") for report in reports]
+    if len(platforms) != len(set(platforms)):
+        raise ValueError("duplicate acceptance report platform")
+    if set(platforms) != set(SUPPORTED_PLATFORMS):
         raise ValueError("complete platform evidence is required")
     return aggregate_acceptance(
         reports,

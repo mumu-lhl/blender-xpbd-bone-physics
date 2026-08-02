@@ -39,6 +39,8 @@ def aggregate_acceptance(
         platform = report.get("platform")
         if platform not in SUPPORTED_PLATFORMS:
             raise ValueError(f"unsupported or missing report platform: {platform!r}")
+        if platform in platforms:
+            raise ValueError(f"duplicate acceptance report platform: {platform}")
         if report.get("commit") != commit:
             raise ValueError("acceptance report commit does not match requested commit")
         if report.get("failures"):

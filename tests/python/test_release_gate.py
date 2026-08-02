@@ -70,6 +70,20 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(artifact["success"])
         self.assertEqual(len(artifact["criteria"]), len(REQUIRED_CRITERIA) * len(SUPPORTED_PLATFORMS))
 
+    def test_builder_rejects_duplicate_platform_evidence(self):
+        reference = {"commit": "abc123", "backend": "native", "run_count": 60, "failures": [], "runs": [{}] * 60}
+        report = {
+            "platform": "linux-x86_64",
+            "commit": "abc123",
+            "status": "ok",
+            "verification": {"native_count": 1},
+            "dependencies": {"status": "ok", "unexpected": []},
+            "load_test": {"status": "ok"},
+            "criteria": {criterion: True for criterion in REQUIRED_CRITERIA},
+        }
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            build_v1_acceptance([report, dict(report)], reference, commit="abc123", github_sha="abc123")
+
 
 if __name__ == "__main__":
     unittest.main()
