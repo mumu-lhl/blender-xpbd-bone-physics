@@ -1,6 +1,6 @@
 # Codex CLI Handoff
 
-Status: 2026-08-01 (America/Chicago)
+Status: 2026-08-02 (Asia/Shanghai)
 
 This file is the operational handoff from ChatGPT Work to a local Codex CLI
 checkout. It records the current remote facts, the implementation state, the
@@ -20,6 +20,10 @@ and the design documents.
 | Parent head before this handoff update | `55f0c9eed21921463e1e100f8f24eabc3de1038b` (`55f0c9e`) |
 | Parent update | Fast-forward from `41638e6`; no history rewrite |
 | PR size before this handoff update | 21 commits, 131 changed files |
+
+The local workspace is currently two focused commits ahead of the recorded
+remote head: `745ea20` restores workspace build integrity and `e8b95ca` fixes
+extension archive paths. These commits are local only until explicitly pushed.
 
 This file is itself pushed as the next commit on the PR branch, so its commit
 SHA cannot be embedded into its own contents ahead of time. On startup, always
@@ -124,20 +128,23 @@ Historical recovery breadcrumbs (not a substitute for remote verification):
 
 ## 5. Fresh verification evidence and limitations
 
-The following was run against the current recovery workspace before this file
-was prepared:
+The following was run against the local workspace after the runtime fixes:
 
 - `python -m compileall -q blender_extension tests/python tests/blender scripts`:
   passed.
-- Packaging, RC-gate, and reference-runner subset:
-  10/10 passed.
-- Full Python discovery: 90 tests collected; 86 passed, 4 skipped by contract,
-  and 3 native-module imports failed because `bone_physics_native` was not
-  built/installed in this workspace. This is not evidence of a native failure.
-- `git diff --check`: passed for the recovery workspace.
-- Rust and Blender full gates were not run successfully in this workspace:
-  the recovered environment lacks a usable Rust 1.97.1 toolchain and a built
-  native wheel; no local Blender 5.2 executable is available.
+- Full Python discovery with the built abi3 wheel installed:
+  112 tests passed.
+- Rust formatting, Clippy with `-D warnings`, and workspace tests:
+  passed; 77 Rust tests passed.
+- `cargo tree --duplicates` completed; duplicate dependency groups are
+  reported for `syn`, `thiserror`, and `zerocopy`.
+- Native abi3 wheel build with `maturin==1.14.1`, dependency inspection, and
+  isolated installation: passed.
+- Blender MCP background tests for pre-physics ordering, pose round-trip, and
+  runtime handler: passed.
+- A real native extension archive was built and structurally verified with one
+  Linux native module; archive paths are rooted at the extension package.
+- `git diff --check` and Python compileall: passed.
 
 Earlier Work-session evidence reported a complete Python suite, core fmt/
 Clippy/core tests, a Linux package smoke test, and a 10-scene × 3-FPS × 2-run
@@ -145,17 +152,13 @@ matrix. Treat those as historical evidence only until fresh CI artifacts for
 the live PR head are inspected. Do not report the V1 release gate as green
 without platform-matched artifacts and `HEAD == GITHUB_SHA` evidence.
 
-Known tree inconsistency to resolve before claiming packaging is complete:
+Resolved tree consistency items:
 
-- `blender_extension/blender_manifest.toml` and workspace Cargo metadata use
-  `GPL-3.0-or-later`, but
-  `crates/bone_physics_py/pyproject.toml` still says `GPL-3.0-only`.
-  Confirm the intended license, add a regression test, and update the metadata
-  consistently if the approved policy remains `or-later`.
-- The current remote tree has no `rust-toolchain.toml`; CI explicitly requests
-  Rust `1.97.1`. Decide whether the repository should add an exact toolchain
-  file, based on the approved build policy, before relying on local reproducible
-  builds.
+- License metadata now consistently uses `GPL-3.0-or-later`, with a regression
+  test.
+- No `rust-toolchain.toml` was added. The local stable toolchain is 1.97.1 and
+  CI explicitly installs Rust 1.97.1, so the repository keeps the existing CI
+  pin without adding a toolchain file.
 
 ## 6. Immediate next actions for local Codex CLI
 
@@ -164,8 +167,9 @@ Known tree inconsistency to resolve before claiming packaging is complete:
 2. Inspect the actual remote diff and current CI checks. Do not trust the old
    PR description, which still says “Task 1” although the tree contains later
    work.
-3. Install or activate the pinned Rust 1.97.1 toolchain in the CLI environment,
-   then run the complete gate and diagnose the first real failure:
+3. Keep the local and remote heads distinct until the local commits are
+   explicitly pushed. After that, inspect fresh CI artifacts for the pushed
+   head and diagnose the first real failure, if any:
 
    ```bash
    cargo fmt --all --check
@@ -174,12 +178,9 @@ Known tree inconsistency to resolve before claiming packaging is complete:
    cargo tree --duplicates
    ```
 
-4. Build the abi3 native wheel with `maturin==1.14.1`, install it into an
-   isolated environment, and run the native contract tests. Then run the
-   Blender-independent Python suite again with native tests included.
-5. Resolve the license metadata mismatch and audit the package workflow against
-   the approved four-platform/fresh-host contract. Do not weaken thresholds or
-   replace real Blender/native evidence with a pure-Python fixture.
+4. Audit the package workflow against the approved four-platform/fresh-host
+   contract. Do not weaken thresholds or replace real Blender/native evidence
+   with a pure-Python fixture.
 6. Run the Linux package/native smoke checks locally. Leave Windows, macOS
    arm64, and the macOS Intel limitation as CI facts; there is no official
    Blender 5.2 Intel build, so Intel can only receive native/CPython loading
