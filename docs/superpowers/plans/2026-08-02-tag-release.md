@@ -21,7 +21,7 @@
 **Files:**
 - Modify: `tests/python/test_ci_scripts.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `test_tag_workflow_publishes_only_platform_zips` to read
 `.github/workflows/package.yml` and assert that it contains a `push` tag
@@ -30,7 +30,7 @@ trigger, a `publish-release` job gated by `startsWith(github.ref, 'refs/tags/v')
 the publish job does not mention `.sha256`, `platform-evidence.json`, or
 `v1-acceptance.json`.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -45,13 +45,13 @@ Expected: FAIL because the current workflow has no tag trigger or publish job.
 **Files:**
 - Modify: `.github/workflows/package.yml`
 
-- [ ] **Step 1: Add `push.tags: ["v*"]` while preserving `workflow_dispatch`.**
+- [x] **Step 1: Add `push.tags: ["v*"]` while preserving `workflow_dispatch`.**
 
-- [ ] **Step 2: Add `publish-release` after `contract` with `needs: contract`,
+- [x] **Step 2: Add `publish-release` after `contract` with `needs: contract`,
   tag-only condition, job-level `contents: write`, artifact download, exact
   four-ZIP validation, and `gh release create` with `--generate-notes`.
 
-- [ ] **Step 3: Run the focused test and verify GREEN.**
+- [x] **Step 3: Run the focused test and verify GREEN.**
 
 Run the focused command from Task 1; expected: PASS.
 
@@ -60,10 +60,10 @@ Run the focused command from Task 1; expected: PASS.
 **Files:**
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Record that `v*` tag pushes now build and publish Releases and
+- [x] **Step 1: Record that `v*` tag pushes now build and publish Releases and
   that Release assets exclude sidecars and evidence JSON.**
 
-- [ ] **Step 2: Run verification.**
+- [x] **Step 2: Run verification.**
 
 ```bash
 python -m unittest discover tests/python -v

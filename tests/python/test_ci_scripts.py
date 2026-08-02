@@ -178,6 +178,20 @@ class CommandReportTests(unittest.TestCase):
         self.assertIn("build_v1_acceptance.py", workflow)
         self.assertIn("v1-acceptance.json", workflow)
 
+    def test_tag_workflow_publishes_only_platform_zips(self) -> None:
+        workflow = Path(".github/workflows/package.yml").read_text(encoding="utf-8")
+        self.assertIn("  push:", workflow)
+        self.assertIn("      - 'v*'", workflow)
+        publish = workflow.split("  publish-release:", 1)[1]
+        self.assertIn("needs: contract", publish)
+        self.assertIn("startsWith(github.ref, 'refs/tags/v')", publish)
+        self.assertIn("contents: write", publish)
+        self.assertIn("gh release create", publish)
+        self.assertIn("bone_physics-*.zip", publish)
+        self.assertNotIn(".sha256", publish)
+        self.assertNotIn("platform-evidence.json", publish)
+        self.assertNotIn("v1-acceptance.json", publish)
+
     def test_discovery_arguments_are_compatible_with_python_311(self) -> None:
         self.assertEqual(
             unittest_arguments(Path("."), []),
