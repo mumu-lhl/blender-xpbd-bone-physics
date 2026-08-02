@@ -10,12 +10,17 @@ Before changing physics behavior, public APIs, dependencies, or CI, read:
 2. `docs/design/blender-xpbd-bone-physics-design.md` for approved semantics.
 3. `docs/plans/v1-constraints-collision.md` for task boundaries and progress.
 
-The complete approved roadmap is:
+V1 roadmap status:
 
 1. `docs/plans/v1-core-foundation.md` — completed and merged through PR #1.
-2. `docs/plans/v1-constraints-collision.md` — current Draft PR #2.
-3. `docs/plans/v1-blender-runtime.md` — not started.
-4. `docs/plans/v1-mesh-bake-release.md` — not started.
+2. `docs/plans/v1-constraints-collision.md` — completed and merged through PR #2.
+3. `docs/plans/v1-blender-runtime.md` — completed and merged through PR #4.
+4. `docs/plans/v1-mesh-bake-release.md` — completed in PR #4.
+
+V1.0.0 is published. Tag `v1.0.0` points to the merged `main` commit;
+the GitHub Release contains four platform packages, SHA-256 sidecars, and
+acceptance evidence. Version tags now trigger automatic package builds and
+Release publication; Release assets contain platform ZIPs only.
 
 If the documents appear inconsistent, preserve the design invariants, treat
 `HANDOFF.md` as the newest status record, and stop to resolve any semantic
@@ -59,19 +64,16 @@ conflict before changing code.
 
 ## Development Workflow
 
-- Make the toolchain/dependency migration described in `docs/HANDOFF.md` as a
-  standalone change before adding more physics behavior.
 - For every behavior change, first add a test whose failure demonstrates the
   missing behavior, record the RED result, implement the smallest GREEN change,
   then refactor without changing the contract.
-- Keep one concern per commit. Do not combine dependency migration with Task 7
-  contact-response work.
+- Keep one concern per commit.
 - Diagnose the first compiler, Clippy, formatting, or behavior failure before
   editing code. Do not guess from a failed overall CI status.
-- Preserve existing tests during migrations. Any necessary expectation change
-  needs a documented semantic reason.
-- Keep PR #2 as Draft until Tasks 7 and 8 are complete, fresh CI is green, and
-  an independent review reports no Critical or Important findings.
+- Treat GitHub Actions and exact-commit package evidence as authoritative for
+  cross-platform release verification.
+- Require explicit authorization before creating or changing release tags or
+  GitHub Releases.
 
 ## Required Verification
 
