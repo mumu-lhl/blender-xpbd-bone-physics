@@ -17,6 +17,7 @@ WHITELIST = (
     "libdl.so",
     "ld-linux-",
     "libSystem",
+    "libiconv",
     "KERNEL32.dll",
     "USER32.dll",
     "ADVAPI32.dll",

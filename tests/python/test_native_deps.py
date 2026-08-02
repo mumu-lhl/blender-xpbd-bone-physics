@@ -36,14 +36,14 @@ class NativeDependencyTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             ["otool"],
             0,
-            stdout="solver.so:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0)\n",
+            stdout="solver.so:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0)\n\t/usr/lib/libiconv.2.dylib\n",
             stderr="",
         )
         with patch("scripts.check_native_deps.subprocess.run", return_value=completed):
             report = dependencies(Path("solver.so"), "darwin")
 
         self.assertEqual(report["status"], "ok")
-        self.assertEqual(report["dependencies"], ["libSystem.B.dylib"])
+        self.assertEqual(report["dependencies"], ["libSystem.B.dylib", "libiconv.2.dylib"])
         self.assertEqual(report["unexpected"], [])
 
     def test_windows_dumpbin_names_are_parsed(self):
