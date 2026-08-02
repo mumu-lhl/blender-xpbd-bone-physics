@@ -20,7 +20,10 @@ class PackagingTests(unittest.TestCase):
             extension = root / "blender_extension"
             extension.mkdir()
             (extension / "blender_manifest.toml").write_text('version = "0.1.0"\n', encoding="utf-8")
-            (extension / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (extension / "__init__.py").write_text("\n", encoding="utf-8")
+            package_root = extension / "bone_physics"
+            package_root.mkdir()
+            (package_root / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
             native = root / "bone_physics_native.so"
             native.write_bytes(b"native")
             first = root / "one.zip"
@@ -30,8 +33,9 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), second.read_bytes())
             report = verify(first, expected_platform="linux-x86_64")
             self.assertEqual(report["native_count"], 1)
-            self.assertIn("module.py", report["files"])
-            self.assertNotIn("blender_extension/module.py", report["files"])
+            self.assertIn("__init__.py", report["files"])
+            self.assertNotIn("blender_extension/__init__.py", report["files"])
+            self.assertNotIn("bone_physics/__init__.py", report["files"])
 
     def test_verifier_rejects_platform_without_matching_native_module(self):
         with tempfile.TemporaryDirectory() as directory:

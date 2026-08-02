@@ -16,10 +16,10 @@ def package(source: Path, output: Path, *, native: Path | None = None, platform:
     files: dict[str, bytes] = {}
     manifest = source / "blender_extension" / "blender_manifest.toml"
     files["blender_manifest.toml"] = manifest.read_bytes()
-    extension_root = source / "blender_extension"
-    for path in sorted(extension_root.rglob("*")):
+    package_root = source / "blender_extension" / "bone_physics"
+    for path in sorted(package_root.rglob("*")):
         if path.is_file() and "__pycache__" not in path.parts and path.name != "blender_manifest.toml":
-            files[str(path.relative_to(extension_root)).replace(os.sep, "/")] = path.read_bytes()
+            files[str(path.relative_to(package_root)).replace(os.sep, "/")] = path.read_bytes()
     if native is not None:
         if not native.is_file():
             raise ValueError(f"native module does not exist: {native}")
