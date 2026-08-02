@@ -41,11 +41,13 @@ Status: 2026-08-02 (Asia/Shanghai)
 - Blender MCP: installed-extension two-body smoke plus native reference matrix
   passed; Blender 5.2.0 was used through the bounded MCP CLI runner.
 
-## Remaining release evidence
+## Release evidence
 
-- Run the manual package workflow on the exact pushed commit and inspect the
-  Linux, Windows x86_64, macOS arm64, and macOS x86_64 reports.
-- Build `v1-acceptance.json` only from reports carrying that exact commit SHA.
+- The manual package workflow is wired to inspect Linux, Windows x86_64,
+  macOS arm64, and macOS x86_64 reports from one exact pushed commit and to
+  upload `v1-acceptance.json` with failure snapshots.
+- The final exact-commit package run must pass before V1 is declared shipped;
+  the workflow is the authoritative record.
 - Keep release publication manual. Do not convert a Draft PR or create a
   Release without explicit authorization.
 

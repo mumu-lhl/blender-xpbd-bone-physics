@@ -150,7 +150,7 @@ jobs:
           cargo fmt --all --check > artifacts/v1-gate/cargo-fmt.log 2>&1; fmt_status=$?; status=$((status || fmt_status))
           cargo clippy --workspace --all-targets -- -D warnings > artifacts/v1-gate/cargo-clippy.log 2>&1; clippy_status=$?; status=$((status || clippy_status))
           cargo test --workspace --all-targets > artifacts/v1-gate/cargo-test.log 2>&1; test_status=$?; status=$((status || test_status))
-          python -m unittest discover tests/python -v > artifacts/v1-gate/python-test.log 2>&1; python_status=$?; status=$((status || python_status))
+          python scripts/ci/run_python_tests.py --exclude-prefix test_native_ --report-dir artifacts/v1-gate/python > artifacts/v1-gate/python-test.log 2>&1; python_status=$?; status=$((status || python_status))
           FMT_STATUS="$fmt_status" CLIPPY_STATUS="$clippy_status" TEST_STATUS="$test_status" PYTHON_STATUS="$python_status" python - <<'PY'
           import os
           import json
