@@ -175,6 +175,8 @@ class CommandReportTests(unittest.TestCase):
         self.assertIn("package-and-load", workflow)
         self.assertIn("if: always()", workflow)
         self.assertIn("package-load-report.json", workflow)
+        self.assertIn("build_v1_acceptance.py", workflow)
+        self.assertIn("v1-acceptance.json", workflow)
 
     def test_discovery_arguments_are_compatible_with_python_311(self) -> None:
         self.assertEqual(

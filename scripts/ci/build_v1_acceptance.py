@@ -121,6 +121,7 @@ def build_v1_acceptance(
     *,
     commit: str,
     github_sha: str | None,
+    create_draft: bool = False,
 ) -> dict[str, Any]:
     """Validate all evidence and return the canonical acceptance artifact."""
     if not reference:
@@ -138,7 +139,7 @@ def build_v1_acceptance(
         reports,
         commit=commit,
         github_sha=github_sha,
-        create_draft=False,
+        create_draft=create_draft,
     ) | {
         "reference": {
             "source": "native-reference.json",
@@ -159,6 +160,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--failure-snapshot", type=Path)
     parser.add_argument("--ci-report", type=Path)
+    parser.add_argument("--create-draft", action="store_true")
     args = parser.parse_args()
     try:
         reports = []
@@ -179,6 +181,7 @@ def main() -> int:
             reference,
             commit=args.commit,
             github_sha=args.github_sha,
+            create_draft=args.create_draft,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
