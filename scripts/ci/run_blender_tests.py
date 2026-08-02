@@ -22,6 +22,7 @@ from tests.blender.validate_manifest import validate_extension
 
 
 BLENDER_TEST_SCRIPTS = (
+    "test_installed_extension.py",
     "test_prephysics_order.py",
     "test_pose_roundtrip.py",
     "test_runtime_handler.py",

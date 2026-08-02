@@ -61,6 +61,7 @@ class BlenderRunnerTests(unittest.TestCase):
         self.assertEqual(
             BLENDER_TEST_SCRIPTS,
             (
+                "test_installed_extension.py",
                 "test_prephysics_order.py",
                 "test_pose_roundtrip.py",
                 "test_runtime_handler.py",
