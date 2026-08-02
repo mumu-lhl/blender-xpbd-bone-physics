@@ -19,7 +19,7 @@ use error::{
 };
 use glam::Vec3;
 use pyo3::prelude::*;
-use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods};
+use pyo3::types::{PyAnyMethods, PyBytes, PyDict, PyDictMethods};
 use world::{AdvanceSummary, NativeWorld};
 
 pub use batch::{
@@ -296,6 +296,55 @@ fn read_diagnostics(py: Python<'_>, handle: u64) -> PyResult<Py<PyDict>> {
     })
 }
 
+#[pyfunction]
+fn world_fingerprint(py: Python<'_>, handle: u64) -> PyResult<Py<PyBytes>> {
+    catch_panic(|| {
+        let fingerprint = lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| world.world_fingerprint())
+            .map_err(state_error)?;
+        Ok(PyBytes::new(py, &fingerprint).unbind())
+    })
+}
+
+#[pyfunction]
+fn encode_checkpoint(
+    py: Python<'_>,
+    handle: u64,
+    quality: &Bound<'_, PyAny>,
+) -> PyResult<Py<PyBytes>> {
+    catch_panic(|| {
+        let quality = extract_quality(quality)?;
+        let checkpoint = lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| {
+                world.encode_checkpoint(quality)
+            })
+            .map_err(state_error)?
+            .map_err(operation_error)?;
+        Ok(PyBytes::new(py, &checkpoint).unbind())
+    })
+}
+
+#[pyfunction]
+fn restore_checkpoint(
+    handle: u64,
+    checkpoint: &Bound<'_, PyAny>,
+    fingerprint: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    catch_panic(|| {
+        let checkpoint = checkpoint.extract::<Vec<u8>>().map_err(input_error)?;
+        let fingerprint = fingerprint.extract::<Vec<u8>>().map_err(input_error)?;
+        let fingerprint: [u8; 32] = fingerprint
+            .try_into()
+            .map_err(|_| input_error("checkpoint fingerprint must contain 32 bytes"))?;
+        lock_worlds()?
+            .with_world_mut(WorldHandle::from_raw(handle), |world| {
+                world.restore_checkpoint(&checkpoint, fingerprint)
+            })
+            .map_err(state_error)?
+            .map_err(operation_error)
+    })
+}
+
 fn extract_quality(quality: &Bound<'_, PyAny>) -> PyResult<QualityPolicy> {
     let name = quality.extract::<String>().map_err(input_error)?;
     match name.as_str() {
@@ -327,6 +376,27 @@ fn add_summary(result: &Bound<'_, PyDict>, summary: AdvanceSummary) -> PyResult<
     result.set_item("active_contacts", summary.active_contacts)?;
     result.set_item("deepest_penetration", summary.deepest_penetration)?;
     result.set_item("max_constraint_error", summary.max_constraint_error)?;
+    result.set_item("broad_phase_candidates", summary.broad_phase_candidates)?;
+    result.set_item("ccd_fallbacks", summary.ccd_fallbacks)?;
+    result.set_item("ccd_failures", summary.ccd_failures)?;
+    result.set_item("substep_profiled", summary.substep_profiled)?;
+    let timings = PyDict::new(result.py());
+    timings.set_item("prediction_seconds", summary.phase_timings.prediction_seconds)?;
+    timings.set_item(
+        "animation_inertia_seconds",
+        summary.phase_timings.animation_inertia_seconds,
+    )?;
+    timings.set_item(
+        "contact_generation_seconds",
+        summary.phase_timings.contact_generation_seconds,
+    )?;
+    timings.set_item(
+        "position_solve_seconds",
+        summary.phase_timings.position_solve_seconds,
+    )?;
+    timings.set_item("diagnostics_seconds", summary.phase_timings.diagnostics_seconds)?;
+    timings.set_item("velocity_seconds", summary.phase_timings.velocity_seconds)?;
+    result.set_item("phase_timings", timings)?;
     result.set_item("rolled_back", summary.rolled_back)
 }
 
@@ -369,6 +439,9 @@ fn bone_physics_native(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult
     module.add_function(wrap_pyfunction!(advance, module)?)?;
     module.add_function(wrap_pyfunction!(read_transforms, module)?)?;
     module.add_function(wrap_pyfunction!(read_diagnostics, module)?)?;
+    module.add_function(wrap_pyfunction!(world_fingerprint, module)?)?;
+    module.add_function(wrap_pyfunction!(encode_checkpoint, module)?)?;
+    module.add_function(wrap_pyfunction!(restore_checkpoint, module)?)?;
     #[cfg(feature = "test-panic")]
     module.add_function(wrap_pyfunction!(_trigger_test_panic, module)?)?;
     Ok(())

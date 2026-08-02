@@ -5,12 +5,15 @@ on:
   push:
     branches:
       - main
-      - "feat/**"
   schedule:
     - cron: "23 4 * * 1"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python-unit:

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "fixed_hz": 120,
+  "authoritative_iterations": 64,
+  "fps": [24, 30, 60],
+  "scenarios": [
+    "single_pendulum",
+    "single_hair",
+    "multiple_hair",
+    "graded_tail",
+    "closed_skirt",
+    "fast_arm",
+    "moving_legs",
+    "initial_penetration",
+    "deforming_body",
+    "breast_torso"
+  ],
+  "thresholds": {
+    "rigid_length": 0.000001,
+    "hard_anchor": 0.00001,
+    "residual_penetration": 0.00001,
+    "angular_lock": 0.001,
+    "equal_time_position": 0.00005,
+    "equal_time_angle": 0.001,
+    "repeated_position": 0.000001,
+    "repeated_angle": 0.00001
+  }
+}

@@ -143,6 +143,21 @@ class NativeBatchTests(unittest.TestCase):
 
         self.assertEqual(summary["steps"], 2)
         self.assertFalse(summary["dropped"])
+        self.assertTrue(summary["substep_profiled"])
+        self.assertIn("broad_phase_candidates", summary)
+        self.assertIn("ccd_fallbacks", summary)
+        self.assertIn("ccd_failures", summary)
+        self.assertEqual(
+            set(summary["phase_timings"]),
+            {
+                "prediction_seconds",
+                "animation_inertia_seconds",
+                "contact_generation_seconds",
+                "position_solve_seconds",
+                "diagnostics_seconds",
+                "velocity_seconds",
+            },
+        )
         for offset in (0, 7):
             quaternion = output[offset + 3 : offset + 7]
             length = math.sqrt(sum(component * component for component in quaternion))

@@ -1,16 +1,18 @@
 use glam::{Mat3, Quat, Vec3};
 use std::time::Instant;
 
+use crate::cache::{Decoder, Encoder, unwrap_payload, wrap_payload};
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
 use crate::{
     AnalyticProxy, AnimationTarget, CachedContact, CapsuleCollider, CapsuleColliderDesc,
-    CollisionPipeline, ConstraintId, ConstraintSchedule, ContactKey, ContactLambdas, DeformingMesh,
-    MeshContactHistory, MeshContactKey, MeshId, MeshManifoldLimits, PairKey, PersistentConstraint,
-    QualityPolicy, capsule_triangle_contact, cluster_mesh_contacts,
+    CcdGeometry, CcdResult, CollisionPipeline, ConstraintId, ConstraintSchedule, ContactKey,
+    ContactLambdas, DeformingMesh, MeshContactHistory, MeshContactKey, MeshId, MeshManifoldLimits,
+    PairKey, PersistentConstraint, QualityPolicy, capsule_capsule_toi, capsule_triangle_contact,
+    cluster_mesh_contacts,
 };
-use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
+use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity, WorldFingerprint};
 
 const MIN_CONTACT_DENOMINATOR: f32 = 1.0e-12;
 const CONTACT_SEPARATION_TOLERANCE: f32 = 1.0e-6;
@@ -104,6 +106,14 @@ struct MeshContactSolveGeometry {
     surface_velocity: Vec3,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct ContactGenerationStats {
+    generated_contacts: u32,
+    broad_phase_candidates: u32,
+    ccd_fallbacks: u32,
+    ccd_failures: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SolveProperties {
     pub inverse_mass: f32,
@@ -143,6 +153,9 @@ pub struct StepDiagnostics {
     pub deepest_penetration: f32,
     pub max_constraint_error: f32,
     pub position_iterations: u32,
+    pub broad_phase_candidates: u32,
+    pub ccd_fallbacks: u32,
+    pub ccd_failures: u32,
     pub rolled_back: bool,
 }
 
@@ -604,11 +617,12 @@ impl SolverWorld {
         animation_result?;
 
         let started = timings.is_some().then(Instant::now);
-        let contact_result = self.generate_contacts(dt);
+        let contact_result = self.generate_contacts(dt, options.quality);
         record_phase(timings, started, |value, elapsed| {
             value.contact_generation_seconds += elapsed;
         });
-        let generated_contacts = contact_result?;
+        let contact_stats = contact_result?;
+        let generated_contacts = contact_stats.generated_contacts;
 
         let started = timings.is_some().then(Instant::now);
         let schedule = self.constraint_schedule.clone();
@@ -741,6 +755,9 @@ impl SolverWorld {
             deepest_penetration,
             max_constraint_error,
             position_iterations: options.position_iterations,
+            broad_phase_candidates: contact_stats.broad_phase_candidates,
+            ccd_fallbacks: contact_stats.ccd_fallbacks,
+            ccd_failures: contact_stats.ccd_failures,
             rolled_back: false,
         })
     }
@@ -798,6 +815,9 @@ impl SolverWorld {
             deepest_penetration: 0.0,
             max_constraint_error: 0.0,
             position_iterations,
+            broad_phase_candidates: 0,
+            ccd_fallbacks: 0,
+            ccd_failures: 0,
             rolled_back: true,
         }
     }
@@ -1044,6 +1064,233 @@ impl SolverWorld {
             .map(|index| &self.bodies[index].state)
     }
 
+    /// Returns the canonical identity of all static and input state that can
+    /// affect a future solve. Dynamic poses and contact multipliers are not
+    /// included, so a checkpoint can be restored after the world has advanced.
+    #[must_use]
+    pub fn world_fingerprint(&self) -> WorldFingerprint {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"xpbd-world-fingerprint-v1");
+        write_vec3(&mut bytes, self.config.gravity);
+        write_f32(&mut bytes, self.config.fixed_dt);
+
+        write_u32(&mut bytes, self.bodies.len());
+        for entry in &self.bodies {
+            write_u32(&mut bytes, entry.desc.id.get());
+            write_pose(&mut bytes, entry.desc.rest_pose);
+            write_vec3(&mut bytes, entry.desc.local_center_of_mass);
+            write_vec3(&mut bytes, entry.desc.local_head);
+            write_vec3(&mut bytes, entry.desc.local_tail);
+            write_f32(&mut bytes, entry.desc.inverse_mass);
+            write_vec3(&mut bytes, entry.desc.inverse_inertia);
+            write_f32(&mut bytes, entry.desc.gravity_scale);
+            write_f32(&mut bytes, entry.desc.linear_damping);
+            write_f32(&mut bytes, entry.desc.angular_damping);
+        }
+
+        let mut static_constraints = self.constraints.clone();
+        for constraint in &mut static_constraints {
+            constraint.lambda = Vec3::ZERO;
+        }
+        write_debug(&mut bytes, &static_constraints);
+        write_debug(&mut bytes, &self.colliders);
+        write_debug(&mut bytes, &self.analytic_proxies);
+        write_u32(&mut bytes, self.meshes.len());
+        for mesh in &self.meshes {
+            write_u32(&mut bytes, mesh.id().get());
+            write_debug(&mut bytes, mesh.topology());
+            write_f32(&mut bytes, mesh.thickness());
+            write_debug(&mut bytes, mesh.body_region_ignores());
+        }
+
+        write_u32(&mut bytes, self.animation_targets.len());
+        for (id, target) in &self.animation_targets {
+            write_u32(&mut bytes, id.get());
+            write_pose(&mut bytes, target.previous);
+            write_pose(&mut bytes, target.current);
+            write_f32(&mut bytes, target.translation_inertia);
+            write_f32(&mut bytes, target.rotation_inertia);
+        }
+
+        WorldFingerprint::hash_canonical(&bytes)
+    }
+
+    #[must_use]
+    pub fn configuration_fingerprint(&self) -> WorldFingerprint {
+        self.world_fingerprint()
+    }
+
+    /// Encodes dynamic solver state with a versioned, checksummed envelope.
+    pub fn encode_checkpoint(&self) -> Result<Vec<u8>, SolverError> {
+        if self.paused {
+            return Err(SolverError::WorldPaused);
+        }
+        let fingerprint = self.world_fingerprint();
+        let mut encoder = Encoder::new();
+        encoder.f32(self.target_alpha);
+        encoder.u8(u8::from(self.paused));
+
+        encoder.u32(self.bodies.len() as u32);
+        for entry in &self.bodies {
+            encoder.u32(entry.desc.id.get());
+            write_pose_encoder(&mut encoder, entry.state.pose);
+            write_pose_encoder(&mut encoder, entry.state.previous_pose);
+            write_pose_encoder(&mut encoder, entry.state.predicted_pose);
+            write_pose_encoder(&mut encoder, entry.state.integrated_pose);
+            write_vec3_encoder(&mut encoder, entry.state.velocity.linear);
+            write_vec3_encoder(&mut encoder, entry.state.velocity.angular);
+            write_vec3_encoder(&mut encoder, entry.state.contact_translation_correction);
+            write_vec3_encoder(&mut encoder, entry.state.contact_rotation_correction);
+        }
+
+        encoder.u32(self.constraints.len() as u32);
+        for constraint in &self.constraints {
+            encoder.u32(constraint.id.get());
+            encoder.u8(u8::from(constraint.enabled));
+            write_vec3_encoder(&mut encoder, constraint.lambda);
+        }
+
+        encoder.u32(self.cached_contacts.len() as u32);
+        for (key, contact) in &self.cached_contacts {
+            write_u32_encoder(&mut encoder, key.pair.first().get());
+            write_u32_encoder(&mut encoder, key.pair.second().get());
+            write_u32_encoder(&mut encoder, key.feature_a);
+            write_u32_encoder(&mut encoder, key.feature_b);
+            write_contact_encoder(&mut encoder, *contact);
+        }
+
+        encoder.u32(self.cached_analytic_contacts.len() as u32);
+        for cached in &self.cached_analytic_contacts {
+            write_u32_encoder(&mut encoder, cached.key.pair.first().get());
+            write_u32_encoder(&mut encoder, cached.key.pair.second().get());
+            write_u32_encoder(&mut encoder, cached.key.feature_a);
+            write_u32_encoder(&mut encoder, cached.key.feature_b);
+            write_u32_encoder(&mut encoder, cached.body_collider.get());
+            write_u32_encoder(&mut encoder, cached.proxy.get());
+            encoder.u8(u8::from(cached.was_separated));
+            write_contact_encoder(&mut encoder, cached.contact);
+        }
+
+        encoder.u32(self.cached_mesh_contacts.len() as u32);
+        for cached in &self.cached_mesh_contacts {
+            write_u32_encoder(&mut encoder, cached.key.collider.get());
+            write_u32_encoder(&mut encoder, cached.key.mesh.get());
+            write_u32_encoder(&mut encoder, cached.key.triangle.get());
+            write_u32_encoder(&mut encoder, cached.key.feature);
+            write_u32_encoder(&mut encoder, cached.source_triangle.get());
+            write_u32_encoder(&mut encoder, cached.body_collider.get());
+            encoder.u8(u8::from(cached.was_separated));
+            write_contact_encoder(&mut encoder, cached.contact);
+        }
+
+        encoder.u32(self.meshes.len() as u32);
+        for mesh in &self.meshes {
+            encoder.u32(mesh.id().get());
+            write_positions_encoder(&mut encoder, mesh.previous_positions());
+            write_positions_encoder(&mut encoder, mesh.current_positions());
+        }
+
+        Ok(wrap_payload(fingerprint, encoder.finish()))
+    }
+
+    /// Validates and restores a checkpoint atomically.
+    pub fn restore_checkpoint(
+        &mut self,
+        bytes: &[u8],
+        expected_fingerprint: WorldFingerprint,
+    ) -> Result<(), SolverError> {
+        if self.world_fingerprint() != expected_fingerprint {
+            return Err(SolverError::invalid_value("world_fingerprint", 0));
+        }
+        let payload = unwrap_payload(bytes, expected_fingerprint)?;
+        let mut candidate = self.clone();
+        candidate.restore_checkpoint_payload(payload)?;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn restore_checkpoint_payload(&mut self, payload: &[u8]) -> Result<(), SolverError> {
+        let mut decoder = Decoder::new(payload);
+        self.target_alpha = decoder.f32()?;
+        let paused = decoder.u8()?;
+        if paused > 1 {
+            return Err(SolverError::invalid_value("checkpoint_paused", paused));
+        }
+
+        let body_count = decoder.count("checkpoint_bodies")?;
+        if body_count != self.bodies.len() {
+            return Err(SolverError::invalid_value(
+                "checkpoint_body_count",
+                body_count,
+            ));
+        }
+        for _ in 0..body_count {
+            let id = BodyId::new(decoder.u32()?);
+            let index = self
+                .bodies
+                .binary_search_by_key(&id, |entry| entry.desc.id)
+                .map_err(|_| SolverError::MissingBody(id.get()))?;
+            let state = &mut self.bodies[index].state;
+            state.pose = read_pose(&mut decoder)?;
+            state.previous_pose = read_pose(&mut decoder)?;
+            state.predicted_pose = read_pose(&mut decoder)?;
+            state.integrated_pose = read_pose(&mut decoder)?;
+            state.velocity.linear = read_vec3(&mut decoder)?;
+            state.velocity.angular = read_vec3(&mut decoder)?;
+            state.contact_translation_correction = read_vec3(&mut decoder)?;
+            state.contact_rotation_correction = read_vec3(&mut decoder)?;
+        }
+
+        let constraint_count = decoder.count("checkpoint_constraints")?;
+        if constraint_count != self.constraints.len() {
+            return Err(SolverError::invalid_value(
+                "checkpoint_constraint_count",
+                constraint_count,
+            ));
+        }
+        for _ in 0..constraint_count {
+            let id = crate::ConstraintId::new(decoder.u32()?);
+            let index = self
+                .constraints
+                .binary_search_by_key(&id, |constraint| constraint.id)
+                .map_err(|_| SolverError::invalid_value("checkpoint_constraint_id", id.get()))?;
+            let enabled = decoder.u8()?;
+            if enabled > 1 {
+                return Err(SolverError::invalid_value("checkpoint_enabled", enabled));
+            }
+            self.constraints[index].enabled = enabled != 0;
+            self.constraints[index].lambda = read_vec3(&mut decoder)?;
+        }
+
+        self.cached_contacts = read_cached_contacts(&mut decoder)?;
+        self.cached_analytic_contacts = read_analytic_contacts(&mut decoder)?;
+        self.cached_mesh_contacts = read_mesh_contacts(&mut decoder)?;
+
+        let mesh_count = decoder.count("checkpoint_meshes")?;
+        if mesh_count != self.meshes.len() {
+            return Err(SolverError::invalid_value("checkpoint_mesh_count", mesh_count));
+        }
+        for _ in 0..mesh_count {
+            let id = MeshId::new(decoder.u32()?);
+            let previous = read_positions(&mut decoder)?;
+            let current = read_positions(&mut decoder)?;
+            let mesh = self
+                .meshes
+                .iter_mut()
+                .find(|mesh| mesh.id() == id)
+                .ok_or_else(|| SolverError::invalid_value("checkpoint_mesh_id", id.get()))?;
+            mesh.update_vertices(previous, current)?;
+        }
+
+        if !decoder.is_done() {
+            return Err(SolverError::invalid_value("checkpoint_trailing_bytes", 0));
+        }
+        self.paused = paused != 0;
+        self.last_failure = None;
+        self.failure_hint = None;
+        Ok(())
+    }
+
     pub fn anchor_error(&self, id: ConstraintId) -> Result<f32, SolverError> {
         let constraint = self.constraint(id)?;
         constraint.error(self)
@@ -1148,10 +1395,17 @@ impl SolverWorld {
         Ok(maximum)
     }
 
-    fn generate_contacts(&mut self, dt: f32) -> Result<u32, SolverError> {
+    fn generate_contacts(
+        &mut self,
+        dt: f32,
+        quality: QualityPolicy,
+    ) -> Result<ContactGenerationStats, SolverError> {
         let (previous, predicted) = self.collider_snapshots()?;
         let pipeline = CollisionPipeline::try_new(&self.constraints)?;
         let candidates = pipeline.candidate_pairs(&previous, &predicted)?;
+        let broad_phase_candidates = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
+        let mut ccd_fallbacks = 0;
+        let mut ccd_failures = 0;
         let mut generated = Vec::new();
 
         for pair in candidates {
@@ -1164,11 +1418,7 @@ impl SolverWorld {
             let collider_a = collider_by_id(&predicted, pair.first())?;
             let collider_b = collider_by_id(&predicted, pair.second())?;
             let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
-            let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
-            else {
-                self.failure_hint = None;
-                continue;
-            };
+            let manifold = crate::capsule_manifold(collider_a, collider_b, cached_normal)?;
             let radius_a = collider_a.shape.effective_radius()?;
             let radius_b = collider_b.shape.effective_radius()?;
             let match_context = ContactMatchContext {
@@ -1178,21 +1428,45 @@ impl SolverWorld {
                 current_b: collider_b.pose,
                 radius_sum: radius_a + radius_b,
             };
-            let mut current_contacts = Vec::with_capacity(manifold.points.len());
-
-            for geometry in manifold.points {
-                let center_a = geometry.point_a - geometry.normal * radius_a;
-                let center_b = geometry.point_b + geometry.normal * radius_b;
-                let contact = CachedContact {
-                    local_a: local_point(collider_a.pose, center_a),
-                    local_b: local_point(collider_b.pose, center_b),
-                    normal: geometry.normal,
-                    tangents: tangent_basis(geometry.normal),
-                    lambdas: ContactLambdas::default(),
-                    age: 1,
-                };
-                contact.validate()?;
-                current_contacts.push(contact);
+            let mut current_contacts = Vec::new();
+            if let Some(manifold) = manifold {
+                current_contacts.reserve(manifold.points.len());
+                for geometry in manifold.points {
+                    current_contacts.push(cached_contact_from_geometry(
+                        collider_a,
+                        collider_b,
+                        geometry,
+                    )?);
+                }
+            } else if !matches!(quality, QualityPolicy::ApproximatePreview { .. }) {
+                match capsule_capsule_toi(previous_a, collider_a, previous_b, collider_b, dt)? {
+                    CcdResult::Impact {
+                        geometry: CcdGeometry::Capsule(geometry),
+                        ..
+                    } => current_contacts.push(cached_contact_from_geometry(
+                        collider_a,
+                        collider_b,
+                        geometry,
+                    )?),
+                    CcdResult::Failed {
+                        fallback: Some(CcdGeometry::Capsule(geometry)),
+                    } => {
+                        ccd_fallbacks = ccd_fallbacks.saturating_add(1);
+                        current_contacts.push(cached_contact_from_geometry(
+                            collider_a,
+                            collider_b,
+                            geometry,
+                        )?);
+                    }
+                    CcdResult::Failed { .. } => {
+                        ccd_failures = ccd_failures.saturating_add(1);
+                    }
+                    CcdResult::NoImpact | CcdResult::Impact { .. } => {}
+                }
+            }
+            if current_contacts.is_empty() {
+                self.failure_hint = None;
+                continue;
             }
             let previous_contacts: Vec<_> = self
                 .cached_contacts
@@ -1222,7 +1496,12 @@ impl SolverWorld {
             .checked_add(analytic_count)
             .and_then(|count| count.checked_add(mesh_count))
             .ok_or_else(|| SolverError::invalid_value("contact_count", usize::MAX as f64))?;
-        contact_count(total)
+        Ok(ContactGenerationStats {
+            generated_contacts: contact_count(total)?,
+            broad_phase_candidates,
+            ccd_fallbacks,
+            ccd_failures,
+        })
     }
 
     fn generate_analytic_contacts(
@@ -2606,6 +2885,27 @@ fn runtime_collider(
     }
 }
 
+fn cached_contact_from_geometry(
+    collider_a: &CapsuleCollider,
+    collider_b: &CapsuleCollider,
+    geometry: crate::ContactGeometry,
+) -> Result<CachedContact, SolverError> {
+    let radius_a = collider_a.shape.effective_radius()?;
+    let radius_b = collider_b.shape.effective_radius()?;
+    let center_a = geometry.point_a - geometry.normal * radius_a;
+    let center_b = geometry.point_b + geometry.normal * radius_b;
+    let contact = CachedContact {
+        local_a: local_point(collider_a.pose, center_a),
+        local_b: local_point(collider_b.pose, center_b),
+        normal: geometry.normal,
+        tangents: tangent_basis(geometry.normal),
+        lambdas: ContactLambdas::default(),
+        age: 1,
+    };
+    contact.validate()?;
+    Ok(contact)
+}
+
 fn collider_by_id(
     colliders: &[CapsuleCollider],
     id: crate::ColliderId,
@@ -2991,5 +3291,188 @@ fn step_failure_error(failure: &StepFailure) -> SolverError {
         SolverError::NonFiniteState(body)
     } else {
         SolverError::invalid_value("solver_state", failure.kind as u8)
+    }
+}
+
+fn write_u32(bytes: &mut Vec<u8>, value: usize) {
+    bytes.extend_from_slice(&(value as u32).to_le_bytes());
+}
+
+fn write_f32(bytes: &mut Vec<u8>, value: f32) {
+    bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+}
+
+fn write_vec3(bytes: &mut Vec<u8>, value: Vec3) {
+    write_f32(bytes, value.x);
+    write_f32(bytes, value.y);
+    write_f32(bytes, value.z);
+}
+
+fn canonical_quat(value: Quat) -> Quat {
+    if value.w < 0.0
+        || (value.w == 0.0
+            && (value.x < 0.0
+                || (value.x == 0.0 && (value.y < 0.0 || (value.y == 0.0 && value.z < 0.0)))))
+    {
+        -value
+    } else {
+        value
+    }
+}
+
+fn write_pose(bytes: &mut Vec<u8>, value: Pose) {
+    write_vec3(bytes, value.translation);
+    let rotation = canonical_quat(value.rotation);
+    bytes.extend_from_slice(&rotation.x.to_bits().to_le_bytes());
+    bytes.extend_from_slice(&rotation.y.to_bits().to_le_bytes());
+    bytes.extend_from_slice(&rotation.z.to_bits().to_le_bytes());
+    bytes.extend_from_slice(&rotation.w.to_bits().to_le_bytes());
+}
+
+fn write_debug<T: core::fmt::Debug>(bytes: &mut Vec<u8>, value: &T) {
+    let rendered = format!("{value:?}");
+    write_u32(bytes, rendered.len());
+    bytes.extend_from_slice(rendered.as_bytes());
+}
+
+fn write_pose_encoder(encoder: &mut Encoder, value: Pose) {
+    write_vec3_encoder(encoder, value.translation);
+    encoder.f32(value.rotation.x);
+    encoder.f32(value.rotation.y);
+    encoder.f32(value.rotation.z);
+    encoder.f32(value.rotation.w);
+}
+
+fn write_vec3_encoder(encoder: &mut Encoder, value: Vec3) {
+    encoder.f32(value.x);
+    encoder.f32(value.y);
+    encoder.f32(value.z);
+}
+
+fn write_u32_encoder(encoder: &mut Encoder, value: u32) {
+    encoder.u32(value);
+}
+
+fn write_contact_encoder(encoder: &mut Encoder, contact: CachedContact) {
+    write_vec3_encoder(encoder, contact.local_a);
+    write_vec3_encoder(encoder, contact.local_b);
+    write_vec3_encoder(encoder, contact.normal);
+    write_vec3_encoder(encoder, contact.tangents[0]);
+    write_vec3_encoder(encoder, contact.tangents[1]);
+    encoder.f32(contact.lambdas.normal);
+    encoder.f32(contact.lambdas.tangents[0]);
+    encoder.f32(contact.lambdas.tangents[1]);
+    encoder.u32(contact.age);
+}
+
+fn write_positions_encoder(encoder: &mut Encoder, positions: &[Vec3]) {
+    encoder.u32(positions.len() as u32);
+    for position in positions {
+        write_vec3_encoder(encoder, *position);
+    }
+}
+
+fn read_vec3(decoder: &mut Decoder<'_>) -> Result<Vec3, SolverError> {
+    Ok(Vec3::new(decoder.f32()?, decoder.f32()?, decoder.f32()?))
+}
+
+fn read_pose(decoder: &mut Decoder<'_>) -> Result<Pose, SolverError> {
+    Pose::try_new(
+        read_vec3(decoder)?,
+        Quat::from_xyzw(
+            decoder.f32()?,
+            decoder.f32()?,
+            decoder.f32()?,
+            decoder.f32()?,
+        ),
+    )
+}
+
+fn read_contact(decoder: &mut Decoder<'_>) -> Result<CachedContact, SolverError> {
+    let contact = CachedContact {
+        local_a: read_vec3(decoder)?,
+        local_b: read_vec3(decoder)?,
+        normal: read_vec3(decoder)?,
+        tangents: [read_vec3(decoder)?, read_vec3(decoder)?],
+        lambdas: ContactLambdas {
+            normal: decoder.f32()?,
+            tangents: [decoder.f32()?, decoder.f32()?],
+        },
+        age: decoder.u32()?,
+    };
+    contact.validate()?;
+    Ok(contact)
+}
+
+fn read_positions(decoder: &mut Decoder<'_>) -> Result<Vec<Vec3>, SolverError> {
+    let count = decoder.count("checkpoint_vertices")?;
+    (0..count).map(|_| read_vec3(decoder)).collect()
+}
+
+fn read_cached_contacts(
+    decoder: &mut Decoder<'_>,
+) -> Result<Vec<(ContactKey, CachedContact)>, SolverError> {
+    let count = decoder.count("checkpoint_contacts")?;
+    let mut contacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let pair = PairKey::ordered(
+            crate::ColliderId::new(decoder.u32()?),
+            crate::ColliderId::new(decoder.u32()?),
+        )?;
+        let key = ContactKey::new(pair, decoder.u32()?, decoder.u32()?);
+        contacts.push((key, read_contact(decoder)?));
+    }
+    contacts.sort_by_key(|(key, _)| *key);
+    Ok(contacts)
+}
+
+fn read_analytic_contacts(
+    decoder: &mut Decoder<'_>,
+) -> Result<Vec<AnalyticCachedContact>, SolverError> {
+    let count = decoder.count("checkpoint_analytic_contacts")?;
+    let mut contacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let pair = PairKey::ordered(
+            crate::ColliderId::new(decoder.u32()?),
+            crate::ColliderId::new(decoder.u32()?),
+        )?;
+        contacts.push(AnalyticCachedContact {
+            key: ContactKey::new(pair, decoder.u32()?, decoder.u32()?),
+            body_collider: crate::ColliderId::new(decoder.u32()?),
+            proxy: crate::ColliderId::new(decoder.u32()?),
+            was_separated: read_bool(decoder, "checkpoint_was_separated")?,
+            contact: read_contact(decoder)?,
+        });
+    }
+    contacts.sort_by_key(|contact| contact.key);
+    Ok(contacts)
+}
+
+fn read_mesh_contacts(decoder: &mut Decoder<'_>) -> Result<Vec<MeshCachedContact>, SolverError> {
+    let count = decoder.count("checkpoint_mesh_contacts")?;
+    let mut contacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        contacts.push(MeshCachedContact {
+            key: crate::MeshContactKey {
+                collider: crate::ColliderId::new(decoder.u32()?),
+                mesh: crate::MeshId::new(decoder.u32()?),
+                triangle: crate::TriangleId::new(decoder.u32()?),
+                feature: decoder.u32()?,
+            },
+            source_triangle: crate::TriangleId::new(decoder.u32()?),
+            body_collider: crate::ColliderId::new(decoder.u32()?),
+            was_separated: read_bool(decoder, "checkpoint_was_separated")?,
+            contact: read_contact(decoder)?,
+        });
+    }
+    contacts.sort_by_key(|contact| contact.key);
+    Ok(contacts)
+}
+
+fn read_bool(decoder: &mut Decoder<'_>, field: &'static str) -> Result<bool, SolverError> {
+    match decoder.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => Err(SolverError::invalid_value(field, value)),
     }
 }
