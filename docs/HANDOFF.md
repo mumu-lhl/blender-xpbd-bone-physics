@@ -17,19 +17,17 @@ and the design documents.
 | PR state | Open, Draft, not merged |
 | Base | `main` at `cedfb330e2cbdb98888df3a338566cace7c08840` |
 | Head branch | `feat/v1-blender-runtime` |
-| Parent head before this handoff update | `55f0c9eed21921463e1e100f8f24eabc3de1038b` (`55f0c9e`) |
+| Current remote head | `5ff5de2` (`fix: rollback runtime bookkeeping`) |
 | Parent update | Fast-forward from `41638e6`; no history rewrite |
 | PR size at the recorded remote head | 23 commits, 132 changed files |
 
-The local workspace is currently two focused commits ahead of the recorded
-remote head: `745ea20` restores workspace build integrity and `e8b95ca` fixes
-extension archive paths. These commits are local only until explicitly pushed.
+The local workspace is detached at the pushed PR head `5ff5de2`; it matches
+`origin/feat/v1-blender-runtime`. The runtime implementation and focused
+rollback/replay fixes are present in the remote Draft PR.
 
-This file is itself pushed as the next commit on the PR branch, so its commit
-SHA cannot be embedded into its own contents ahead of time. On startup, always
-read the live PR head and use that exact commit as the baseline. The parent
-remote tree for this handoff was `55f0c9e`; the handoff commit is the current
-newest commit unless another collaborator has advanced the branch.
+On startup, always read the live PR head and use that exact commit as the
+baseline. This handoff records the pushed runtime head; a later collaborator
+may advance the branch.
 
 Do not reset the remote tree to the old
 recovery-workspace commits `4383442`, `534a951`, `fed8559`, `d595ab5`, or
@@ -133,7 +131,7 @@ The following was run against the local workspace after the runtime fixes:
 - `python -m compileall -q blender_extension tests/python tests/blender scripts`:
   passed.
 - Full Python discovery with the built abi3 wheel installed:
-  112 tests passed.
+  116 tests passed.
 - Rust formatting, Clippy with `-D warnings`, and workspace tests:
   passed; 77 Rust tests passed.
 - `cargo tree --duplicates` completed; duplicate dependency groups are
@@ -141,7 +139,12 @@ The following was run against the local workspace after the runtime fixes:
 - Native abi3 wheel build with `maturin==1.14.1`, dependency inspection, and
   isolated installation: passed.
 - Blender MCP background tests for pre-physics ordering, pose round-trip, and
-  runtime handler: passed.
+  runtime handler: passed. The installed-extension smoke test also passed in
+  the installed bundle check.
+- GitHub Actions run `30730226419` completed with all four jobs green:
+  native-contract, rust-core, python-unit, and blender-runtime. The latest
+  focused runtime commit is pushed and needs the subsequent PR run for
+  matching-head evidence.
 - A real native extension archive was built and structurally verified with one
   Linux native module; archive paths are rooted at the extension package.
 - `git diff --check` and Python compileall: passed.
@@ -167,9 +170,8 @@ Resolved tree consistency items:
 2. Inspect the actual remote diff and current CI checks. Do not trust the old
    PR description, which still says “Task 1” although the tree contains later
    work.
-3. Keep the local and remote heads distinct until the local commits are
-   explicitly pushed. After that, inspect fresh CI artifacts for the pushed
-   head and diagnose the first real failure, if any:
+3. Inspect fresh CI artifacts for the pushed head and diagnose the first real
+   failure, if any:
 
    ```bash
    cargo fmt --all --check

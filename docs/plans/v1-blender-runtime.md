@@ -8,7 +8,16 @@
 
 **Tech Stack:** Rust stable, PyO3, maturin, Python 3.11+, stdlib `unittest`, Blender 5.2 LTS background mode.
 
-## Handoff Status — Not Started
+## Handoff Status — Implementation complete
+
+Tasks 1–7 are implemented in PR #3. The runtime includes the versioned PyO3
+bridge, packaged native loader, pre-physics Blender adapters, timeline/cache
+replay, guarded per-world failure isolation, transactional native bookkeeping
+rollback, and CI evidence jobs. Local verification is green: 116 Python tests,
+77 Rust tests, and Blender MCP background tests for pre-physics ordering, pose
+round-trip, and runtime handler. The installed-extension smoke test is included
+in the CI Blender job. Keep the PR Draft until the fresh CI run for the latest
+head and the repository's independent review requirements are recorded.
 
 Do not begin this plan until the constraints-and-collision plan is complete and
 PR #2 has passed its final gate.
