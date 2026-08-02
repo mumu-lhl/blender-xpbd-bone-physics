@@ -114,6 +114,13 @@ class BlenderRunnerTests(unittest.TestCase):
 
 
 class CommandReportTests(unittest.TestCase):
+    def test_rust_ci_does_not_call_removed_reference_report_script(self) -> None:
+        capture = Path("scripts/ci/capture.sh").read_text(encoding="utf-8")
+        self.assertNotIn("reference_report.py", capture)
+
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("rust-reference-report", workflow)
+
     def test_native_job_installs_toolchain_file_components_explicitly(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
         native_job = workflow.split("  native-contract:", 1)[1].split(
