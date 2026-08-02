@@ -52,6 +52,69 @@ def _validate_platform(report: dict[str, Any], commit: str) -> None:
         raise ValueError(f"package load evidence is incomplete on {platform}")
 
 
+def derive_platform_reports(
+    platform_reports: Iterable[dict[str, Any]],
+    reference: dict[str, Any],
+    ci: dict[str, Any],
+    *,
+    commit: str,
+) -> list[dict[str, Any]]:
+    """Attach the global CI/reference criteria to raw package reports."""
+    _validate_reference(reference, commit)
+    required_ci = {"rust_tests", "workspace_clippy", "blender_headless", "documentation"}
+    if set(ci) != required_ci or not all(value is True for value in ci.values()):
+        raise ValueError("CI acceptance criteria are incomplete")
+    reference_ok = {
+        "reference_matrix": reference["run_count"] == 60,
+        "equal_time_matrix": all(
+            run.get("metrics", {}).get("equal_time_position_error", 0.0) <= 0.00005
+            and run.get("metrics", {}).get("equal_time_angle_error", 0.0) <= 0.001
+            for run in reference["runs"]
+        ),
+        "repeatability": all(
+            run.get("metrics", {}).get("repeat_position_error", 0.0) <= 0.000001
+            and run.get("metrics", {}).get("repeat_angle_error", 0.0) <= 0.00001
+            for run in reference["runs"]
+        ),
+    }
+    result = []
+    for raw in platform_reports:
+        platform = raw.get("platform")
+        _require_commit(raw, commit, f"{platform} report")
+        if raw.get("status") != "ok":
+            raise ValueError(f"package report failed on {platform}")
+        package_ok = {
+            "native_smoke": raw.get("load_test", {}).get("status") == "ok",
+            "package_structure": raw.get("verification", {}).get("native_count") == 1,
+            "native_dependencies": (
+                raw.get("dependencies", {}).get("status") == "ok"
+                and not raw.get("dependencies", {}).get("unexpected")
+            ),
+            "wheel_contract": raw.get("wheel_build", {}).get("status") == "ok",
+        }
+        criteria = {
+            "rust_tests": ci["rust_tests"],
+            "workspace_clippy": ci["workspace_clippy"],
+            "blender_headless": ci["blender_headless"],
+            **reference_ok,
+            **package_ok,
+            "documentation": ci["documentation"],
+        }
+        normalized = dict(raw)
+        normalized["criteria"] = criteria
+        normalized["observed"] = {
+            "reference_run_count": reference["run_count"],
+            "package_status": raw["status"],
+            "native_dependencies": raw["dependencies"].get("dependencies", []),
+        }
+        normalized["allowed"] = {
+            "reference_run_count": 60,
+            "native_dependencies": (),
+        }
+        result.append(normalized)
+    return result
+
+
 def build_v1_acceptance(
     platform_reports: Iterable[dict[str, Any]],
     reference: dict[str, Any] | None,
@@ -95,6 +158,7 @@ def main() -> int:
     parser.add_argument("--report", action="append", required=True, help="platform=report.json")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--failure-snapshot", type=Path)
+    parser.add_argument("--ci-report", type=Path)
     args = parser.parse_args()
     try:
         reports = []
@@ -106,6 +170,10 @@ def main() -> int:
             report["platform"] = platform
             reports.append(report)
         reference = json.loads(args.reference.read_text(encoding="utf-8"))
+        ci = None
+        if args.ci_report is not None:
+            ci = json.loads(args.ci_report.read_text(encoding="utf-8"))
+            reports = derive_platform_reports(reports, reference, ci, commit=args.commit)
         artifact = build_v1_acceptance(
             reports,
             reference,

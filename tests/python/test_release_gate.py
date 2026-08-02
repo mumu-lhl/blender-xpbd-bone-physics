@@ -1,7 +1,7 @@
 import unittest
 
 from scripts.ci.aggregate_acceptance import REQUIRED_CRITERIA, SUPPORTED_PLATFORMS, aggregate_acceptance
-from scripts.ci.build_v1_acceptance import build_v1_acceptance
+from scripts.ci.build_v1_acceptance import build_v1_acceptance, derive_platform_reports
 
 
 def report(platform, commit="abc123", failures=None):
@@ -83,6 +83,27 @@ class ReleaseGateTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "duplicate"):
             build_v1_acceptance([report, dict(report)], reference, commit="abc123", github_sha="abc123")
+
+    def test_builder_derives_criteria_from_raw_package_reports(self):
+        reference = {
+            "commit": "abc123",
+            "backend": "native",
+            "run_count": 60,
+            "failures": [],
+            "runs": [{"metrics": {"equal_time_position_error": 0.0, "equal_time_angle_error": 0.0, "repeat_position_error": 0.0, "repeat_angle_error": 0.0}}] * 60,
+        }
+        raw = {
+            "platform": "linux-x86_64",
+            "commit": "abc123",
+            "status": "ok",
+            "verification": {"native_count": 1},
+            "dependencies": {"status": "ok", "unexpected": [], "dependencies": []},
+            "load_test": {"status": "ok"},
+            "wheel_build": {"status": "ok"},
+        }
+        ci = {criterion: True for criterion in ("rust_tests", "workspace_clippy", "blender_headless", "documentation")}
+        result = derive_platform_reports([raw], reference, ci, commit="abc123")
+        self.assertEqual(set(result[0]["criteria"]), set(REQUIRED_CRITERIA))
 
 
 if __name__ == "__main__":
