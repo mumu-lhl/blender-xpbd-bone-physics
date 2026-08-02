@@ -9,8 +9,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
+import sys
 from typing import Any
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[2]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from tests.blender.scenes.body_collision import (
+    breast_torso,
+    deforming_body,
+    fast_arm,
+    initial_penetration,
+)
+from tests.blender.scenes.hair import multiple_hair, single_hair
+from tests.blender.scenes.skirt import closed_skirt, moving_legs
+from tests.blender.scenes.tail import graded_tail, single_pendulum
+from tests.reference.native_backend import NativeReferenceBackend
 
 FIXED_HZ = 120
 AUTHORITATIVE_ITERATIONS = 64
@@ -68,19 +85,52 @@ def load_acceptance(path: Path) -> dict[str, Any]:
     return data
 
 
-def run_matrix(acceptance: dict[str, Any], *, seed: int) -> dict[str, Any]:
+FIXTURE_BUILDERS = {
+    "single_pendulum": single_pendulum,
+    "single_hair": single_hair,
+    "multiple_hair": multiple_hair,
+    "graded_tail": graded_tail,
+    "closed_skirt": closed_skirt,
+    "fast_arm": fast_arm,
+    "moving_legs": moving_legs,
+    "initial_penetration": initial_penetration,
+    "deforming_body": deforming_body,
+    "breast_torso": breast_torso,
+}
+
+
+def run_matrix(
+    acceptance: dict[str, Any],
+    *,
+    seed: int,
+    backend: str = "fixture",
+) -> dict[str, Any]:
     thresholds = acceptance["thresholds"]
     runs: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    native_backend = NativeReferenceBackend() if backend == "native" else None
+    if backend not in {"fixture", "native"}:
+        raise ValueError(f"unsupported reference backend: {backend}")
     for scenario in SCENARIO_NAMES:
         for fps in FPS:
             for bake in (1, 2):
-                record = _run_fixture(scenario, fps, bake, seed)
+                if native_backend is None:
+                    record = _run_fixture(scenario, fps, bake, seed)
+                else:
+                    record = native_backend.run(
+                        FIXTURE_BUILDERS[scenario](),
+                        fps,
+                        bake,
+                        seed,
+                    )
                 runs.append(record)
-                failures.extend(_check_record(record, thresholds, seed))
+    _add_comparison_metrics(runs)
+    for record in runs:
+        failures.extend(_check_record(record, thresholds, seed))
 
     return {
         "schema_version": 1,
+        "backend": backend,
         "seed": seed,
         "fixed_hz": FIXED_HZ,
         "authoritative_iterations": AUTHORITATIVE_ITERATIONS,
@@ -89,6 +139,45 @@ def run_matrix(acceptance: dict[str, Any], *, seed: int) -> dict[str, Any]:
         "runs": runs,
         "failures": failures,
     }
+
+
+def _add_comparison_metrics(runs: list[dict[str, Any]]) -> None:
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for record in runs:
+        groups.setdefault((record["scenario"], record["bake"]), []).append(record)
+    for records in groups.values():
+        baseline = next(record for record in records if record["fps"] == 24)
+        for record in records:
+            if "poses" not in record:
+                continue
+            position_error, angle_error = _pose_difference(record["poses"], baseline["poses"])
+            record["metrics"]["equal_time_position_error"] = position_error
+            record["metrics"]["equal_time_angle_error"] = angle_error
+
+    repeats: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
+    for record in runs:
+        repeats.setdefault((record["scenario"], record["fps"]), {})[record["bake"]] = record
+    for pair in repeats.values():
+        if 1 not in pair or 2 not in pair or "poses" not in pair[1]:
+            continue
+        position_error, angle_error = _pose_difference(pair[1]["poses"], pair[2]["poses"])
+        pair[1]["metrics"]["repeat_position_error"] = position_error
+        pair[1]["metrics"]["repeat_angle_error"] = angle_error
+        pair[2]["metrics"]["repeat_position_error"] = position_error
+        pair[2]["metrics"]["repeat_angle_error"] = angle_error
+
+
+def _pose_difference(first, second) -> tuple[float, float]:
+    position_error = 0.0
+    angle_error = 0.0
+    for offset in range(0, len(first), 7):
+        position_error = max(
+            position_error,
+            max(abs(left - right) for left, right in zip(first[offset : offset + 3], second[offset : offset + 3])),
+        )
+        dot = abs(sum(left * right for left, right in zip(first[offset + 3 : offset + 7], second[offset + 3 : offset + 7])))
+        angle_error = max(angle_error, 2.0 * math.acos(min(1.0, dot)))
+    return position_error, angle_error
 
 
 def _run_fixture(scenario: str, fps: int, bake: int, seed: int) -> dict[str, Any]:
@@ -159,11 +248,11 @@ def _failure(record: dict[str, Any], seed: int, criterion: str, metric: str, act
         "fps": record["fps"],
         "bake": record["bake"],
         "seed": seed,
-        "build_batch": {"scenario": scenario, "fps": record["fps"], "bake": record["bake"]},
-        "animation_input": {"frame_rate": record["fps"], "fixed_hz": FIXED_HZ},
-        "mesh_input": {"vertices": [], "topology": f"{scenario}-topology-v1"},
-        "checkpoint": f"checkpoints/{scenario}/{record['bake']}/frame-000120.bin",
-        "diagnostic_id": f"{scenario}:{criterion}",
+        "build_batch": record.get("build_batch", {"scenario": scenario, "fps": record["fps"], "bake": record["bake"]}),
+        "animation_input": record.get("animation_input", {"frame_rate": record["fps"], "fixed_hz": FIXED_HZ}),
+        "mesh_input": record.get("mesh_input", {"vertices": [], "topology": f"{scenario}-topology-v1"}),
+        "checkpoint": record.get("checkpoint", f"checkpoints/{scenario}/{record['bake']}/frame-000120.bin"),
+        "diagnostic_id": record.get("diagnostics", {}).get("diagnostic_id", f"{scenario}:{criterion}"),
         "metric": metric,
         "actual": actual,
         "allowed": allowed,
@@ -175,9 +264,10 @@ def main() -> int:
     parser.add_argument("--acceptance", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20260801)
+    parser.add_argument("--backend", choices=("native", "fixture"), default="native")
     args = parser.parse_args()
     acceptance = load_acceptance(args.acceptance)
-    report = run_matrix(acceptance, seed=args.seed)
+    report = run_matrix(acceptance, seed=args.seed, backend=args.backend)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 1 if report["failures"] else 0
