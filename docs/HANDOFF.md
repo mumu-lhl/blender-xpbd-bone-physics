@@ -17,7 +17,7 @@ and the design documents.
 | PR state | Open, Draft, not merged |
 | Base | `main` at `cedfb330e2cbdb98888df3a338566cace7c08840` |
 | Head branch | `feat/v1-blender-runtime` |
-| Current remote head | `5ff5de2` (`fix: rollback runtime bookkeeping`) |
+| Current remote head | `71904fc` (`docs: mark Blender runtime complete`) |
 | Parent update | Fast-forward from `41638e6`; no history rewrite |
 | PR size at the recorded remote head | 23 commits, 132 changed files |
 
@@ -141,10 +141,9 @@ The following was run against the local workspace after the runtime fixes:
 - Blender MCP background tests for pre-physics ordering, pose round-trip, and
   runtime handler: passed. The installed-extension smoke test also passed in
   the installed bundle check.
-- GitHub Actions run `30730226419` completed with all four jobs green:
-  native-contract, rust-core, python-unit, and blender-runtime. The latest
-  focused runtime commit is pushed and needs the subsequent PR run for
-  matching-head evidence.
+- GitHub Actions run `30730574741` for the current remote head completed with
+  all four jobs green: native-contract, rust-core, python-unit, and
+  blender-runtime.
 - A real native extension archive was built and structurally verified with one
   Linux native module; archive paths are rooted at the extension package.
 - `git diff --check` and Python compileall: passed.
