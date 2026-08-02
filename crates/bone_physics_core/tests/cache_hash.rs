@@ -1,4 +1,6 @@
-use bone_physics_core::{BodyId, BodyInit, BoneBodyDesc, Pose, SolverConfig, SolverWorld, WorldFingerprint};
+use bone_physics_core::{
+    BodyId, BodyInit, BoneBodyDesc, Pose, SolverConfig, SolverWorld, WorldFingerprint,
+};
 use glam::{Quat, Vec3};
 
 fn world(rotation: Quat, order: &[u32]) -> SolverWorld {

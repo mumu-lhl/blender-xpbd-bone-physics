@@ -70,12 +70,15 @@ fn corrupt_or_mismatched_checkpoint_is_rejected_atomically() {
     let before = world.body(BodyId::new(1)).unwrap().clone();
 
     let mut corrupt = checkpoint.clone();
-    corrupt[corrupt.len() - 1] ^= 0x80;
+    let last = corrupt.len() - 1;
+    corrupt[last] ^= 0x80;
     assert!(world.restore_checkpoint(&corrupt, fingerprint).is_err());
     assert_eq!(world.body(BodyId::new(1)).unwrap(), &before);
-    assert!(world
-        .restore_checkpoint(&checkpoint, WorldFingerprint::from_bytes([7; 32]))
-        .is_err());
+    assert!(
+        world
+            .restore_checkpoint(&checkpoint, WorldFingerprint::from_bytes([7; 32]))
+            .is_err()
+    );
     assert_eq!(world.body(BodyId::new(1)).unwrap(), &before);
 }
 
@@ -86,9 +89,16 @@ fn checkpoint_rejects_wrong_format_version_and_truncation() {
     let checkpoint = world.encode_checkpoint().unwrap();
     let mut wrong_version = checkpoint.clone();
     wrong_version[8] ^= 1;
-    assert!(world.clone().restore_checkpoint(&wrong_version, fingerprint).is_err());
-    assert!(world
-        .clone()
-        .restore_checkpoint(&checkpoint[..checkpoint.len() - 1], fingerprint)
-        .is_err());
+    assert!(
+        world
+            .clone()
+            .restore_checkpoint(&wrong_version, fingerprint)
+            .is_err()
+    );
+    assert!(
+        world
+            .clone()
+            .restore_checkpoint(&checkpoint[..checkpoint.len() - 1], fingerprint)
+            .is_err()
+    );
 }

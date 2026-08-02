@@ -1,6 +1,6 @@
 use bone_physics_core::{
-    capsule_capsule_toi, capsule_triangle_toi, Capsule, CapsuleCollider, ColliderId,
-    CollisionFilter, CcdResult, MovingTriangle, BodyId, MeshId, Pose, RegionId, TriangleId,
+    BodyId, Capsule, CapsuleCollider, CcdResult, ColliderId, CollisionFilter, MeshId,
+    MovingTriangle, Pose, RegionId, TriangleId, capsule_capsule_toi, capsule_triangle_toi,
 };
 use glam::Vec3;
 

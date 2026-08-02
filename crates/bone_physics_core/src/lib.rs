@@ -28,7 +28,7 @@ pub use collision::{
     MeshManifoldLimits, MeshTopology, MeshUpdate, MeshValidationIssue, MeshValidationReport,
     MovingTriangle, PairKey, TriangleFeature, TriangleFeatureOwner, TriangleFeatureOwners,
     capsule_analytic_contact, capsule_capsule_toi, capsule_manifold, capsule_triangle_contact,
-    cluster_mesh_contacts,
+    capsule_triangle_toi, cluster_mesh_contacts,
 };
 pub use constraint::{
     AngularLimit, AnimationTarget, ConstraintKind, ContinuousAngles, EulerOrder,

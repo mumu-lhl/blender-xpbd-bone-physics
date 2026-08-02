@@ -54,13 +54,16 @@ mod tests {
 
     #[test]
     fn panic_is_translated_to_internal_error() {
-        let error = catch_panic(|| -> PyResult<()> {
-            panic!("injected bridge panic");
-        })
-        .unwrap_err();
+        Python::initialize();
+        Python::attach(|_py| {
+            let error = catch_panic(|| -> PyResult<()> {
+                panic!("injected bridge panic");
+            })
+            .unwrap_err();
 
-        let message = error.to_string();
-        assert!(message.contains("native solver panic"));
-        assert!(message.contains("injected bridge panic"));
+            let message = error.to_string();
+            assert!(message.contains("native solver panic"));
+            assert!(message.contains("injected bridge panic"));
+        });
     }
 }

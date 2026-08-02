@@ -110,9 +110,12 @@ impl NativeWorld {
         let length = u32::from_le_bytes(bytes[16..20].try_into().expect("fixed width")) as usize;
         let end = 20usize
             .checked_add(length)
-            .ok_or_else(|| SolverError::invalid_value("native_checkpoint_length", length))?;
+            .ok_or_else(|| SolverError::invalid_value("native_checkpoint_length", length as f64))?;
         if end != bytes.len() {
-            return Err(SolverError::invalid_value("native_checkpoint_length", length));
+            return Err(SolverError::invalid_value(
+                "native_checkpoint_length",
+                length as f64,
+            ));
         }
         if self.world_fingerprint() != expected_fingerprint {
             return Err(SolverError::invalid_value("world_fingerprint", 0));

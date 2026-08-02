@@ -1074,7 +1074,7 @@ impl SolverWorld {
         write_vec3(&mut bytes, self.config.gravity);
         write_f32(&mut bytes, self.config.fixed_dt);
 
-        write_u32(&mut bytes, self.bodies.len());
+        write_u32(&mut bytes, self.bodies.len() as u32);
         for entry in &self.bodies {
             write_u32(&mut bytes, entry.desc.id.get());
             write_pose(&mut bytes, entry.desc.rest_pose);
@@ -1095,7 +1095,7 @@ impl SolverWorld {
         write_debug(&mut bytes, &static_constraints);
         write_debug(&mut bytes, &self.colliders);
         write_debug(&mut bytes, &self.analytic_proxies);
-        write_u32(&mut bytes, self.meshes.len());
+        write_u32(&mut bytes, self.meshes.len() as u32);
         for mesh in &self.meshes {
             write_u32(&mut bytes, mesh.id().get());
             write_debug(&mut bytes, mesh.topology());
@@ -1103,7 +1103,7 @@ impl SolverWorld {
             write_debug(&mut bytes, mesh.body_region_ignores());
         }
 
-        write_u32(&mut bytes, self.animation_targets.len());
+        write_u32(&mut bytes, self.animation_targets.len() as u32);
         for (id, target) in &self.animation_targets {
             write_u32(&mut bytes, id.get());
             write_pose(&mut bytes, target.previous);
@@ -1221,7 +1221,7 @@ impl SolverWorld {
         if body_count != self.bodies.len() {
             return Err(SolverError::invalid_value(
                 "checkpoint_body_count",
-                body_count,
+                body_count as f64,
             ));
         }
         for _ in 0..body_count {
@@ -1245,7 +1245,7 @@ impl SolverWorld {
         if constraint_count != self.constraints.len() {
             return Err(SolverError::invalid_value(
                 "checkpoint_constraint_count",
-                constraint_count,
+                constraint_count as f64,
             ));
         }
         for _ in 0..constraint_count {
@@ -1268,7 +1268,10 @@ impl SolverWorld {
 
         let mesh_count = decoder.count("checkpoint_meshes")?;
         if mesh_count != self.meshes.len() {
-            return Err(SolverError::invalid_value("checkpoint_mesh_count", mesh_count));
+            return Err(SolverError::invalid_value(
+                "checkpoint_mesh_count",
+                mesh_count as f64,
+            ));
         }
         for _ in 0..mesh_count {
             let id = MeshId::new(decoder.u32()?);
@@ -1404,8 +1407,8 @@ impl SolverWorld {
         let pipeline = CollisionPipeline::try_new(&self.constraints)?;
         let candidates = pipeline.candidate_pairs(&previous, &predicted)?;
         let broad_phase_candidates = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
-        let mut ccd_fallbacks = 0;
-        let mut ccd_failures = 0;
+        let mut ccd_fallbacks: u32 = 0;
+        let mut ccd_failures: u32 = 0;
         let mut generated = Vec::new();
 
         for pair in candidates {
@@ -1433,9 +1436,7 @@ impl SolverWorld {
                 current_contacts.reserve(manifold.points.len());
                 for geometry in manifold.points {
                     current_contacts.push(cached_contact_from_geometry(
-                        collider_a,
-                        collider_b,
-                        geometry,
+                        collider_a, collider_b, geometry,
                     )?);
                 }
             } else if !matches!(quality, QualityPolicy::ApproximatePreview { .. }) {
@@ -1444,18 +1445,14 @@ impl SolverWorld {
                         geometry: CcdGeometry::Capsule(geometry),
                         ..
                     } => current_contacts.push(cached_contact_from_geometry(
-                        collider_a,
-                        collider_b,
-                        geometry,
+                        collider_a, collider_b, geometry,
                     )?),
                     CcdResult::Failed {
                         fallback: Some(CcdGeometry::Capsule(geometry)),
                     } => {
                         ccd_fallbacks = ccd_fallbacks.saturating_add(1);
                         current_contacts.push(cached_contact_from_geometry(
-                            collider_a,
-                            collider_b,
-                            geometry,
+                            collider_a, collider_b, geometry,
                         )?);
                     }
                     CcdResult::Failed { .. } => {
@@ -3294,8 +3291,8 @@ fn step_failure_error(failure: &StepFailure) -> SolverError {
     }
 }
 
-fn write_u32(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u32).to_le_bytes());
+fn write_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
 }
 
 fn write_f32(bytes: &mut Vec<u8>, value: f32) {
@@ -3331,7 +3328,7 @@ fn write_pose(bytes: &mut Vec<u8>, value: Pose) {
 
 fn write_debug<T: core::fmt::Debug>(bytes: &mut Vec<u8>, value: &T) {
     let rendered = format!("{value:?}");
-    write_u32(bytes, rendered.len());
+    write_u32(bytes, rendered.len() as u32);
     bytes.extend_from_slice(rendered.as_bytes());
 }
 

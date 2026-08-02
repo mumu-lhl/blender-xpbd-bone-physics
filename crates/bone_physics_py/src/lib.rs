@@ -300,7 +300,9 @@ fn read_diagnostics(py: Python<'_>, handle: u64) -> PyResult<Py<PyDict>> {
 fn world_fingerprint(py: Python<'_>, handle: u64) -> PyResult<Py<PyBytes>> {
     catch_panic(|| {
         let fingerprint = lock_worlds()?
-            .with_world_mut(WorldHandle::from_raw(handle), |world| world.world_fingerprint())
+            .with_world_mut(WorldHandle::from_raw(handle), |world| {
+                world.world_fingerprint()
+            })
             .map_err(state_error)?;
         Ok(PyBytes::new(py, &fingerprint).unbind())
     })
@@ -381,7 +383,10 @@ fn add_summary(result: &Bound<'_, PyDict>, summary: AdvanceSummary) -> PyResult<
     result.set_item("ccd_failures", summary.ccd_failures)?;
     result.set_item("substep_profiled", summary.substep_profiled)?;
     let timings = PyDict::new(result.py());
-    timings.set_item("prediction_seconds", summary.phase_timings.prediction_seconds)?;
+    timings.set_item(
+        "prediction_seconds",
+        summary.phase_timings.prediction_seconds,
+    )?;
     timings.set_item(
         "animation_inertia_seconds",
         summary.phase_timings.animation_inertia_seconds,
@@ -394,7 +399,10 @@ fn add_summary(result: &Bound<'_, PyDict>, summary: AdvanceSummary) -> PyResult<
         "position_solve_seconds",
         summary.phase_timings.position_solve_seconds,
     )?;
-    timings.set_item("diagnostics_seconds", summary.phase_timings.diagnostics_seconds)?;
+    timings.set_item(
+        "diagnostics_seconds",
+        summary.phase_timings.diagnostics_seconds,
+    )?;
     timings.set_item("velocity_seconds", summary.phase_timings.velocity_seconds)?;
     result.set_item("phase_timings", timings)?;
     result.set_item("rolled_back", summary.rolled_back)

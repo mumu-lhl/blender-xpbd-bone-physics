@@ -28,10 +28,6 @@ impl Encoder {
         self.u32(value.to_bits());
     }
 
-    pub fn bytes(&mut self, value: &[u8]) {
-        self.bytes.extend_from_slice(value);
-    }
-
     #[must_use]
     pub fn finish(self) -> Vec<u8> {
         self.bytes
@@ -56,8 +52,8 @@ impl<'a> Decoder<'a> {
     }
 
     pub fn u32(&mut self) -> Result<u32, SolverError> {
-        let bytes = self.take(4)?;
-        Ok(u32::from_le_bytes(bytes.try_into().expect("fixed width")))
+        let bytes = self.take::<4>()?;
+        Ok(u32::from_le_bytes(bytes))
     }
 
     pub fn f32(&mut self) -> Result<f32, SolverError> {
@@ -67,10 +63,6 @@ impl<'a> Decoder<'a> {
         } else {
             Err(SolverError::invalid_value("checkpoint_float", value))
         }
-    }
-
-    pub fn fixed<const N: usize>(&mut self) -> Result<[u8; N], SolverError> {
-        Ok(self.take(N)?.try_into().expect("fixed width"))
     }
 
     pub fn count(&mut self, field: &'static str) -> Result<usize, SolverError> {
@@ -105,10 +97,7 @@ pub fn wrap_payload(fingerprint: WorldFingerprint, payload: Vec<u8>) -> Vec<u8> 
     result
 }
 
-pub fn unwrap_payload(
-    bytes: &[u8],
-    expected: WorldFingerprint,
-) -> Result<&[u8], SolverError> {
+pub fn unwrap_payload(bytes: &[u8], expected: WorldFingerprint) -> Result<&[u8], SolverError> {
     if bytes.len() < HEADER_BYTES {
         return Err(truncated());
     }
@@ -144,4 +133,3 @@ pub fn unwrap_payload(
 fn truncated() -> SolverError {
     SolverError::invalid_value("checkpoint_truncated", 0)
 }
-

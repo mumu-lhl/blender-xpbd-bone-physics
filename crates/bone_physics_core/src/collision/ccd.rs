@@ -1,7 +1,7 @@
-use super::capsule::{capsule_manifold, CapsuleManifold};
-use super::shape::CapsuleCollider;
-use super::triangle::{capsule_triangle_contact, MeshContactGeometry, MovingTriangle};
 use super::ContactGeometry;
+use super::capsule::{CapsuleManifold, capsule_manifold};
+use super::shape::CapsuleCollider;
+use super::triangle::{MeshContactGeometry, MovingTriangle, capsule_triangle_contact};
 use crate::error::validate_finite;
 use crate::{Pose, SolverError};
 
@@ -16,14 +16,9 @@ pub enum CcdGeometry {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CcdResult {
-    Impact {
-        toi: f32,
-        geometry: CcdGeometry,
-    },
+    Impact { toi: f32, geometry: CcdGeometry },
     NoImpact,
-    Failed {
-        fallback: Option<CcdGeometry>,
-    },
+    Failed { fallback: Option<CcdGeometry> },
 }
 
 /// Find the earliest contact over one fixed step for two linearly/rotationally
@@ -48,11 +43,8 @@ pub fn capsule_capsule_toi(
     let impact = search_interval(SAMPLE_COUNT, |time| {
         let a = interpolate_collider(previous_a, current_a, time);
         let b = interpolate_collider(previous_b, current_b, time);
-        capsule_manifold(&a, &b, None).map(|value| {
-            value.map(|manifold| {
-                CcdGeometry::Capsule(first_geometry(&manifold))
-            })
-        })
+        capsule_manifold(&a, &b, None)
+            .map(|value| value.map(|manifold| CcdGeometry::Capsule(first_geometry(&manifold))))
     })?;
     Ok(impact.unwrap_or(CcdResult::NoImpact))
 }
@@ -105,9 +97,8 @@ fn search_interval(
                     left = midpoint;
                 }
             }
-            let geometry = contact_at(impact_time)?.ok_or_else(|| {
-                SolverError::invalid_value("ccd_refined_geometry", impact_time)
-            })?;
+            let geometry = contact_at(impact_time)?
+                .ok_or_else(|| SolverError::invalid_value("ccd_refined_geometry", impact_time))?;
             return Ok(Some(CcdResult::Impact {
                 toi: impact_time.clamp(0.0, 1.0),
                 geometry,
