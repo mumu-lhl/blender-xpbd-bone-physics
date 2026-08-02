@@ -19,7 +19,7 @@ and the design documents.
 | Head branch | `feat/v1-blender-runtime` |
 | Parent head before this handoff update | `55f0c9eed21921463e1e100f8f24eabc3de1038b` (`55f0c9e`) |
 | Parent update | Fast-forward from `41638e6`; no history rewrite |
-| PR size before this handoff update | 21 commits, 131 changed files |
+| PR size at the recorded remote head | 23 commits, 132 changed files |
 
 The local workspace is currently two focused commits ahead of the recorded
 remote head: `745ea20` restores workspace build integrity and `e8b95ca` fixes
