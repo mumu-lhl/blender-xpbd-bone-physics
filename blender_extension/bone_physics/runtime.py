@@ -24,6 +24,10 @@ class RuntimeBridge(Protocol):
 
     def read_poses(self, handle: int, body_ids: Sequence[int]) -> Sequence[Pose]: ...
 
+    def save_state(self, handle: int) -> object: ...
+
+    def restore_state(self, handle: int, state: object) -> int: ...
+
     def pause(self, handle: int, error: Exception) -> None: ...
 
     def resume(self, handle: int) -> None: ...
@@ -105,6 +109,7 @@ class RuntimeWorld:
             if action.kind is TimelineActionKind.NO_OP:
                 return RuntimeResult(action, executed=False, paused=False)
             previous_channels = self._last_valid_channels
+            native_state = None
             try:
                 if previous_channels is None:
                     previous_channels = self.pose_writer.snapshot(
@@ -112,9 +117,11 @@ class RuntimeWorld:
                         self.body_ids,
                     )
                 self.handle = self.bridge.prepare(self.handle, action)
+                save_state = getattr(self.bridge, "save_state", None)
+                if save_state is not None:
+                    native_state = save_state(self.handle)
                 if action.kind in (
                     TimelineActionKind.RESET,
-                    TimelineActionKind.RESTORE_AND_REPLAY,
                 ):
                     self.evaluator.reset()
                 sample_times = action.fixed_times
@@ -182,6 +189,15 @@ class RuntimeWorld:
                         )
                     except Exception:
                         pass
+                if native_state is not None:
+                    restore_state = getattr(self.bridge, "restore_state", None)
+                    if restore_state is not None:
+                        try:
+                            restored_handle = restore_state(self.handle, native_state)
+                            if restored_handle is not None:
+                                self.handle = restored_handle
+                        except Exception:
+                            pass
                 self.paused = True
                 self.last_error = error
                 try:
@@ -369,6 +385,17 @@ class NativeRuntimeBridge:
             )
             for index in range(len(body_ids))
         )
+
+    def save_state(self, handle: int) -> tuple[bytes, bytes]:
+        return (
+            self.native.encode_checkpoint(handle, "authoritative_bake"),
+            self.native.world_fingerprint(handle),
+        )
+
+    def restore_state(self, handle: int, state: object) -> int:
+        checkpoint, fingerprint = state
+        self.native.restore_checkpoint(handle, checkpoint, fingerprint)
+        return handle
 
     def pause(self, handle: int, error: Exception) -> None:
         self.last_diagnostics[handle] = {

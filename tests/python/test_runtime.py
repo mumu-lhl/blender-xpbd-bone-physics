@@ -13,6 +13,7 @@ from blender_extension.bone_physics.runtime import NativeRuntimeBridge, RuntimeW
 from blender_extension.bone_physics.scene_adapter import Pose
 from blender_extension.bone_physics.timeline import (
     CacheIndex,
+    Checkpoint,
     TimelineAction,
     TimelineActionKind,
     TimelineState,
@@ -57,6 +58,7 @@ class Evaluator:
         self.capture_times = []
         self.saved_state = 0
         self.state = 0
+        self.reset_calls = 0
 
     def capture_at(self, scene, depsgraph, world_spec, sample_time):
         scene.seconds = sample_time
@@ -72,6 +74,7 @@ class Evaluator:
         scene.seconds = time
 
     def reset(self):
+        self.reset_calls += 1
         self.state = 0
 
     def save_state(self):
@@ -87,8 +90,11 @@ class Bridge:
         self.events = events
         self.fail = False
         self.fail_after = None
+        self.fail_read = False
         self.paused = []
         self.solve_actions = []
+        self.saved_states = []
+        self.restored_states = []
 
     def prepare(self, handle, action):
         self.events.append(f"prepare:{action.kind.value}")
@@ -108,7 +114,17 @@ class Bridge:
 
     def read_poses(self, handle, body_ids):
         self.events.append("read")
+        if self.fail_read:
+            raise RuntimeError("native read failed")
         return tuple(Pose((float(body_id), 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)) for body_id in body_ids)
+
+    def save_state(self, handle):
+        state = (handle, len(self.saved_states))
+        self.saved_states.append(state)
+        return state
+
+    def restore_state(self, handle, state):
+        self.restored_states.append((handle, state))
 
     def pause(self, handle, error):
         self.events.append("pause")
@@ -136,7 +152,7 @@ class Writer:
 
 
 class RuntimeTests(unittest.TestCase):
-    def runtime(self, events):
+    def runtime(self, events, *, cache_index=None):
         evaluator = Evaluator(events)
         bridge = Bridge(events)
         writer = Writer(events)
@@ -150,7 +166,7 @@ class RuntimeTests(unittest.TestCase):
                 fixed_dt=1.0 / 120.0,
                 configuration_hash="world-a",
             ),
-            cache_index=CacheIndex(),
+            cache_index=cache_index or CacheIndex(),
             evaluator=evaluator,
             bridge=bridge,
             pose_writer=writer,
@@ -253,6 +269,50 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(result.paused)
         self.assertEqual(evaluator.state, state_before)
         self.assertAlmostEqual(scene.seconds, 0.03)
+
+    def test_restore_replay_preserves_evaluator_history(self):
+        events = []
+        cache = CacheIndex(
+            (
+                Checkpoint(
+                    identifier="frame-1",
+                    time=1.0 / 120.0,
+                    configuration_hash="world-a",
+                    fps=24.0,
+                    fixed_dt=1.0 / 120.0,
+                ),
+            )
+        )
+        runtime, evaluator, _bridge, _writer = self.runtime(
+            events,
+            cache_index=cache,
+        )
+        scene = Scene()
+        runtime.on_frame_change(scene, object())
+        scene.seconds = 1.0 / 24.0
+        runtime.on_frame_change(scene, object())
+        state_before_replay = evaluator.state
+        reset_calls = evaluator.reset_calls
+
+        scene.seconds = 0.025
+        result = runtime.on_frame_change(scene, object())
+
+        self.assertTrue(result.executed)
+        self.assertEqual(evaluator.reset_calls, reset_calls)
+        self.assertEqual(evaluator.state, state_before_replay + 2)
+
+    def test_read_failure_restores_native_state_before_pausing(self):
+        events = []
+        runtime, _evaluator, bridge, _writer = self.runtime(events)
+        scene = Scene()
+        runtime.on_frame_change(scene, object())
+        bridge.fail_read = True
+        scene.seconds = 1.0 / 24.0
+
+        result = runtime.on_frame_change(scene, object())
+
+        self.assertTrue(result.paused)
+        self.assertEqual(len(bridge.restored_states), 1)
 
     def test_bridge_failure_retains_pose_and_pauses_only_this_world(self):
         events = []
