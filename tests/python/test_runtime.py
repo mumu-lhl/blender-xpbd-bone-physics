@@ -270,7 +270,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(evaluator.state, state_before)
         self.assertAlmostEqual(scene.seconds, 0.03)
 
-    def test_restore_replay_preserves_evaluator_history(self):
+    def test_restore_replay_reseeds_evaluator_at_checkpoint(self):
         events = []
         cache = CacheIndex(
             (
@@ -298,8 +298,8 @@ class RuntimeTests(unittest.TestCase):
         result = runtime.on_frame_change(scene, object())
 
         self.assertTrue(result.executed)
-        self.assertEqual(evaluator.reset_calls, reset_calls)
-        self.assertEqual(evaluator.state, state_before_replay + 2)
+        self.assertEqual(evaluator.reset_calls, reset_calls + 1)
+        self.assertEqual(evaluator.state, 3)
 
     def test_read_failure_restores_native_state_before_pausing(self):
         events = []
@@ -421,6 +421,21 @@ class RuntimeTests(unittest.TestCase):
             1.0,
             places=6,
         )
+
+        bridge.last_snapshot_time[handle] = 1.0
+        bridge.mesh_topologies[(handle, 7)] = ("topology", 11)
+        bridge.last_diagnostics[handle] = {"steps": 1}
+        saved_state = bridge.save_state(handle)
+        bridge.last_snapshot_time[handle] = 2.0
+        bridge.mesh_topologies[(handle, 8)] = ("stale", 12)
+        bridge.last_diagnostics[handle] = {"steps": 2}
+
+        bridge.restore_state(handle, saved_state)
+
+        self.assertEqual(bridge.last_snapshot_time[handle], 1.0)
+        self.assertEqual(bridge.mesh_topologies[(handle, 7)], ("topology", 11))
+        self.assertNotIn((handle, 8), bridge.mesh_topologies)
+        self.assertEqual(bridge.last_diagnostics[handle], {"steps": 1})
 
 
 if __name__ == "__main__":

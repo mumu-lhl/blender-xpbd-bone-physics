@@ -120,10 +120,20 @@ class RuntimeWorld:
                 save_state = getattr(self.bridge, "save_state", None)
                 if save_state is not None:
                     native_state = save_state(self.handle)
-                if action.kind in (
-                    TimelineActionKind.RESET,
-                ):
+                if action.kind is TimelineActionKind.RESET:
                     self.evaluator.reset()
+                elif action.kind is TimelineActionKind.RESTORE_AND_REPLAY:
+                    if action.checkpoint is None:
+                        raise RuntimeError(
+                            "restore-and-replay action is missing its checkpoint"
+                        )
+                    self.evaluator.reset()
+                    self.evaluator.capture_at(
+                        scene,
+                        depsgraph,
+                        self.world_spec,
+                        action.checkpoint.time,
+                    )
                 sample_times = action.fixed_times
                 if (
                     not sample_times
@@ -386,15 +396,39 @@ class NativeRuntimeBridge:
             for index in range(len(body_ids))
         )
 
-    def save_state(self, handle: int) -> tuple[bytes, bytes]:
+    def save_state(self, handle: int) -> tuple[object, ...]:
         return (
             self.native.encode_checkpoint(handle, "authoritative_bake"),
             self.native.world_fingerprint(handle),
+            self.last_snapshot_time.get(handle),
+            tuple(
+                (mesh_id, value)
+                for (saved_handle, mesh_id), value in self.mesh_topologies.items()
+                if saved_handle == handle
+            ),
+            self.last_diagnostics.get(handle),
         )
 
     def restore_state(self, handle: int, state: object) -> int:
-        checkpoint, fingerprint = state
+        (
+            checkpoint,
+            fingerprint,
+            snapshot_time,
+            mesh_entries,
+            diagnostics,
+        ) = state
         self.native.restore_checkpoint(handle, checkpoint, fingerprint)
+        if snapshot_time is None:
+            self.last_snapshot_time.pop(handle, None)
+        else:
+            self.last_snapshot_time[handle] = snapshot_time
+        self._forget_meshes(handle)
+        for mesh_id, value in mesh_entries:
+            self.mesh_topologies[(handle, mesh_id)] = value
+        if diagnostics is None:
+            self.last_diagnostics.pop(handle, None)
+        else:
+            self.last_diagnostics[handle] = diagnostics
         return handle
 
     def pause(self, handle: int, error: Exception) -> None:
