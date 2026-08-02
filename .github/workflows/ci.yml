@@ -77,14 +77,6 @@ jobs:
           name: rust-ci-report
           path: artifacts/
           if-no-files-found: error
-      - name: Upload numerical reference report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-reference-report
-          path: artifacts/rust-reference-*.json
-          if-no-files-found: error
-
   native-contract:
     runs-on: ubuntu-latest
     steps:
