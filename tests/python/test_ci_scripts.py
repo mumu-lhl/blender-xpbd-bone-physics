@@ -8,8 +8,10 @@ import tempfile
 import unittest
 from zipfile import ZipFile
 
+import scripts.ci.install_blender as blender_installer
 from scripts.ci.install_blender import (
     BLENDER_ARCHIVE_SHA256,
+    BLENDER_ARCHIVE_URL,
     safe_extract_tar,
     verify_sha256,
 )
@@ -23,6 +25,12 @@ from scripts.ci.run_python_tests import command_report, unittest_arguments
 
 
 class BlenderInstallerTests(unittest.TestCase):
+    def test_download_request_sets_a_user_agent(self) -> None:
+        request = blender_installer.blender_download_request()
+
+        self.assertEqual(request.full_url, BLENDER_ARCHIVE_URL)
+        self.assertTrue(request.get_header("User-agent"))
+
     def test_pinned_checksum_has_sha256_shape(self) -> None:
         self.assertEqual(len(BLENDER_ARCHIVE_SHA256), 64)
         int(BLENDER_ARCHIVE_SHA256, 16)

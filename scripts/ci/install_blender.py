@@ -20,6 +20,14 @@ BLENDER_ARCHIVE_URL = (
 BLENDER_ARCHIVE_SHA256 = (
     "96f6c181a30f4950607839dc84d42a354b250d8a0231b098b59b7bc69c351c48"
 )
+BLENDER_DOWNLOAD_USER_AGENT = "bone-physics-ci/1.0"
+
+
+def blender_download_request() -> urllib.request.Request:
+    return urllib.request.Request(
+        BLENDER_ARCHIVE_URL,
+        headers={"User-Agent": BLENDER_DOWNLOAD_USER_AGENT},
+    )
 
 
 def verify_sha256(path: Path, expected: str) -> None:
@@ -64,7 +72,7 @@ def install_blender(destination: Path) -> Path:
         return executable
     temporary = archive_path.with_suffix(f"{archive_path.suffix}.part")
     try:
-        with urllib.request.urlopen(BLENDER_ARCHIVE_URL) as response:
+        with urllib.request.urlopen(blender_download_request()) as response:
             with temporary.open("wb") as output:
                 shutil.copyfileobj(response, output, length=1024 * 1024)
         verify_sha256(temporary, BLENDER_ARCHIVE_SHA256)
