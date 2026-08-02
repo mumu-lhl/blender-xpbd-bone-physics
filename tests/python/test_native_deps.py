@@ -50,7 +50,7 @@ class NativeDependencyTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             ["dumpbin"],
             0,
-            stdout="\tKERNEL32.dll\n\tUSER32.dll\n\tBONE_PRIVATE.dll\n",
+            stdout="\tKERNEL32.dll\n\tntdll.dll\n\tpython3.dll\n\tUSER32.dll\n\tBONE_PRIVATE.dll\n",
             stderr="",
         )
         with patch("scripts.check_native_deps.subprocess.run", return_value=completed):
@@ -59,7 +59,7 @@ class NativeDependencyTests(unittest.TestCase):
         self.assertEqual(report["status"], "ok")
         self.assertEqual(
             report["dependencies"],
-            ["BONE_PRIVATE.dll", "KERNEL32.dll", "USER32.dll"],
+            ["BONE_PRIVATE.dll", "KERNEL32.dll", "USER32.dll", "ntdll.dll", "python3.dll"],
         )
         self.assertEqual(report["unexpected"], ["BONE_PRIVATE.dll"])
 

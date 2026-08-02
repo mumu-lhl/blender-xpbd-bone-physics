@@ -19,6 +19,8 @@ WHITELIST = (
     "libSystem",
     "libiconv",
     "KERNEL32.dll",
+    "ntdll.dll",
+    "python3.dll",
     "USER32.dll",
     "ADVAPI32.dll",
     "VCRUNTIME",
