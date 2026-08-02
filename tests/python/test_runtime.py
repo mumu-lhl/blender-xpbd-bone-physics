@@ -120,9 +120,11 @@ class Writer:
         self.events = events
         self.writes = []
         self.restores = []
+        self.current = ("previous-1", "previous-2")
 
     def snapshot(self, armature, body_ids):
-        return tuple(f"previous-{body_id}" for body_id in body_ids)
+        del armature
+        return tuple(self.current[index] for index, _ in enumerate(body_ids))
 
     def restore(self, armature, body_ids, values):
         self.restores.append((armature, tuple(body_ids), tuple(values)))
@@ -130,6 +132,7 @@ class Writer:
     def apply(self, armature, body_ids, poses):
         self.events.append("write")
         self.writes.append((armature, tuple(body_ids), tuple(poses)))
+        self.current = tuple(poses)
 
 
 class RuntimeTests(unittest.TestCase):
@@ -272,6 +275,23 @@ class RuntimeTests(unittest.TestCase):
         other, _evaluator, _bridge, other_writer = self.runtime(other_events)
         other.on_frame_change(scene, object())
         self.assertEqual(len(other_writer.writes), 1)
+
+    def test_failure_after_success_restores_last_written_pose(self):
+        events = []
+        runtime, _evaluator, bridge, writer = self.runtime(events)
+        scene = Scene()
+
+        first = runtime.on_frame_change(scene, object())
+        self.assertTrue(first.executed)
+        last_written = writer.writes[-1][2]
+
+        bridge.fail = True
+        writer.current = ("animated-1", "animated-2")
+        scene.seconds = 0.03
+        failed = runtime.on_frame_change(scene, object())
+
+        self.assertTrue(failed.paused)
+        self.assertEqual(writer.restores[-1][2], last_written)
 
     def test_reentry_and_paused_worlds_are_explicit_noops(self):
         events = []

@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "bone-physics-native"
 version = "0.1.0"
 requires-python = ">=3.11"
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 
 [tool.maturin]
 bindings = "pyo3"

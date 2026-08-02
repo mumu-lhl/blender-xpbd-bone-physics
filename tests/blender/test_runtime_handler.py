@@ -34,6 +34,18 @@ class ReenteringEvaluator:
         self.runtime.on_frame_change(scene, depsgraph)
         return self.evaluator.capture(scene, depsgraph, world_spec)
 
+    def capture_at(self, scene, depsgraph, world_spec, sample_time):
+        self.capture_count += 1
+        return self.evaluator.capture_at(
+            scene,
+            depsgraph,
+            world_spec,
+            sample_time,
+        )
+
+    def __getattr__(self, name):
+        return getattr(self.evaluator, name)
+
 
 class FakeBridge:
     def __init__(self):
@@ -111,8 +123,13 @@ try:
     evaluator.runtime = runtime
     result = runtime.on_frame_change(scene, bpy.context.evaluated_depsgraph_get())
     assert result.executed
-    assert evaluator.capture_count == 1
-    assert bridge.solve_count == 1
+    expected_steps = int(
+        scene.frame_current
+        / (scene.render.fps / scene.render.fps_base)
+        / spec.fixed_dt
+    )
+    assert evaluator.capture_count == expected_steps
+    assert bridge.solve_count == expected_steps
 
     valid = tuple(
         armature.pose.bones[name].matrix_basis.copy()

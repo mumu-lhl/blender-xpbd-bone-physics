@@ -85,6 +85,7 @@ class RuntimeWorld:
         self.guard = ReentryGuard()
         self.paused = False
         self.last_error: Exception | None = None
+        self._last_valid_channels: tuple[object, ...] | None = None
 
     def on_frame_change(self, scene, depsgraph) -> RuntimeResult:
         if self.paused:
@@ -103,12 +104,13 @@ class RuntimeWorld:
             action = self.timeline.observe(observed_time, self.cache_index)
             if action.kind is TimelineActionKind.NO_OP:
                 return RuntimeResult(action, executed=False, paused=False)
-            previous_channels = None
+            previous_channels = self._last_valid_channels
             try:
-                previous_channels = self.pose_writer.snapshot(
-                    self.armature,
-                    self.body_ids,
-                )
+                if previous_channels is None:
+                    previous_channels = self.pose_writer.snapshot(
+                        self.armature,
+                        self.body_ids,
+                    )
                 self.handle = self.bridge.prepare(self.handle, action)
                 if action.kind in (
                     TimelineActionKind.RESET,
@@ -154,6 +156,10 @@ class RuntimeWorld:
                     self.armature,
                     self.body_ids,
                     poses,
+                )
+                self._last_valid_channels = self.pose_writer.snapshot(
+                    self.armature,
+                    self.body_ids,
                 )
             except Exception as error:
                 self.timeline.restore_observation(saved_timeline)

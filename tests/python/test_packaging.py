@@ -1,4 +1,5 @@
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -7,6 +8,12 @@ from scripts.verify_package import verify
 
 
 class PackagingTests(unittest.TestCase):
+    def test_native_metadata_matches_extension_license(self):
+        metadata = tomllib.loads(
+            Path("crates/bone_physics_py/pyproject.toml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(metadata["project"]["license"], "GPL-3.0-or-later")
+
     def test_archive_is_byte_reproducible_and_structurally_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

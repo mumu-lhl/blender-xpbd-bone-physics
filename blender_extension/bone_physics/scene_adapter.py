@@ -110,10 +110,8 @@ class BlenderSceneAdapter:
     def object_to_simulation(self, scene, depsgraph, world_spec) -> tuple[float, ...]:
         del world_spec
         armature = self._evaluated_object(scene, depsgraph, self.armature_name)
-        mathutils = _mathutils()
-        origin = armature.matrix_world.to_translation()
-        self._object_to_simulation = mathutils.Matrix.Translation(-origin)
-        self._simulation_to_world = self._object_to_simulation.inverted_safe()
+        self._object_to_simulation = armature.matrix_world.inverted_safe()
+        self._simulation_to_world = armature.matrix_world.copy()
         return flatten_matrix(self._object_to_simulation)
 
     def target_pose(self, scene, depsgraph, bone: BoneSpec) -> Pose:
