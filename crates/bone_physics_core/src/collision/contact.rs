@@ -3,7 +3,7 @@ use glam::Vec3;
 use super::{Capsule, CollisionFilter, PairKey};
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::pose::validate_vec3;
-use crate::{BodyId, ColliderId, SolverError};
+use crate::{BodyId, ColliderId, MeshId, SolverError, TriangleId};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContactMaterial {
@@ -59,6 +59,14 @@ impl ContactKey {
             feature_b,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct MeshContactKey {
+    pub collider: ColliderId,
+    pub mesh: MeshId,
+    pub triangle: TriangleId,
+    pub feature: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -1,15 +1,18 @@
 use glam::{Mat3, Quat, Vec3};
 use std::time::Instant;
 
+use crate::cache::{Decoder, Encoder, unwrap_payload, wrap_payload};
 use crate::error::{validate_finite, validate_nonnegative};
 use crate::math::world_inverse_inertia;
 use crate::pose::validate_vec3;
 use crate::{
-    AnimationTarget, CachedContact, CapsuleCollider, CapsuleColliderDesc, CollisionPipeline,
-    ConstraintId, ConstraintSchedule, ContactKey, ContactLambdas, PairKey, PersistentConstraint,
-    QualityPolicy,
+    AnalyticProxy, AnimationTarget, CachedContact, CapsuleCollider, CapsuleColliderDesc,
+    CcdGeometry, CcdResult, CollisionPipeline, ConstraintId, ConstraintSchedule, ContactKey,
+    ContactLambdas, DeformingMesh, MeshContactHistory, MeshContactKey, MeshId, MeshManifoldLimits,
+    PairKey, PersistentConstraint, QualityPolicy, capsule_capsule_toi, capsule_triangle_contact,
+    cluster_mesh_contacts,
 };
-use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity};
+use crate::{BodyId, BoneBodyDesc, BoneBodyState, Pose, SolverError, Velocity, WorldFingerprint};
 
 const MIN_CONTACT_DENOMINATOR: f32 = 1.0e-12;
 const CONTACT_SEPARATION_TOLERANCE: f32 = 1.0e-6;
@@ -62,7 +65,53 @@ struct DynamicSnapshot {
     bodies: Vec<BodyEntry>,
     constraints: Vec<PersistentConstraint>,
     cached_contacts: Vec<(ContactKey, CachedContact)>,
+    cached_analytic_contacts: Vec<AnalyticCachedContact>,
+    cached_mesh_contacts: Vec<MeshCachedContact>,
     target_alpha: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AnalyticCachedContact {
+    key: ContactKey,
+    body_collider: crate::ColliderId,
+    proxy: crate::ColliderId,
+    contact: CachedContact,
+    was_separated: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AnalyticContactGeometry {
+    body: BodyId,
+    body_to_proxy: Vec3,
+    surface_offset: Vec3,
+    separation: f32,
+    proxy_velocity: Vec3,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MeshCachedContact {
+    key: MeshContactKey,
+    source_triangle: crate::TriangleId,
+    body_collider: crate::ColliderId,
+    contact: CachedContact,
+    was_separated: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MeshContactSolveGeometry {
+    body: BodyId,
+    body_to_mesh: Vec3,
+    surface_offset: Vec3,
+    separation: f32,
+    surface_velocity: Vec3,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ContactGenerationStats {
+    generated_contacts: u32,
+    broad_phase_candidates: u32,
+    ccd_fallbacks: u32,
+    ccd_failures: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -78,7 +127,11 @@ pub struct SolverWorld {
     constraints: Vec<PersistentConstraint>,
     constraint_schedule: ConstraintSchedule,
     colliders: Vec<CapsuleColliderDesc>,
+    analytic_proxies: Vec<AnalyticProxy>,
+    meshes: Vec<DeformingMesh>,
     cached_contacts: Vec<(ContactKey, CachedContact)>,
+    cached_analytic_contacts: Vec<AnalyticCachedContact>,
+    cached_mesh_contacts: Vec<MeshCachedContact>,
     animation_targets: Vec<(BodyId, AnimationTarget)>,
     target_alpha: f32,
     paused: bool,
@@ -100,6 +153,9 @@ pub struct StepDiagnostics {
     pub deepest_penetration: f32,
     pub max_constraint_error: f32,
     pub position_iterations: u32,
+    pub broad_phase_candidates: u32,
+    pub ccd_fallbacks: u32,
+    pub ccd_failures: u32,
     pub rolled_back: bool,
 }
 
@@ -129,6 +185,7 @@ pub struct StepFailure {
     pub body: Option<BodyId>,
     pub constraint: Option<ConstraintId>,
     pub contact: Option<ContactKey>,
+    pub mesh_contact: Option<MeshContactKey>,
     pub source: Option<SolverError>,
 }
 
@@ -139,6 +196,7 @@ impl StepFailure {
             body: None,
             constraint: None,
             contact: None,
+            mesh_contact: None,
             source: None,
         }
     }
@@ -149,6 +207,7 @@ impl StepFailure {
             body: Some(body),
             constraint: None,
             contact: None,
+            mesh_contact: None,
             source: None,
         }
     }
@@ -159,6 +218,7 @@ impl StepFailure {
             body: None,
             constraint: Some(constraint),
             contact: None,
+            mesh_contact: None,
             source: None,
         }
     }
@@ -169,6 +229,18 @@ impl StepFailure {
             body: None,
             constraint: None,
             contact: Some(contact),
+            mesh_contact: None,
+            source: None,
+        }
+    }
+
+    const fn for_mesh_contact(kind: StepFailureKind, mesh_contact: MeshContactKey) -> Self {
+        Self {
+            kind,
+            body: None,
+            constraint: None,
+            contact: None,
+            mesh_contact: Some(mesh_contact),
             source: None,
         }
     }
@@ -211,7 +283,11 @@ impl SolverWorld {
             constraints: Vec::new(),
             constraint_schedule: ConstraintSchedule::default(),
             colliders: Vec::new(),
+            analytic_proxies: Vec::new(),
+            meshes: Vec::new(),
             cached_contacts: Vec::new(),
+            cached_analytic_contacts: Vec::new(),
+            cached_mesh_contacts: Vec::new(),
             animation_targets: Vec::new(),
             target_alpha: 0.0,
             paused: false,
@@ -259,6 +335,16 @@ impl SolverWorld {
                 });
             }
         }
+        if let Some(collider) = colliders.iter().find(|collider| {
+            self.analytic_proxies
+                .binary_search_by_key(&collider.id, |proxy| proxy.id)
+                .is_ok()
+        }) {
+            return Err(SolverError::DuplicateId {
+                kind: "collider",
+                id: collider.id.get(),
+            });
+        }
         for collider in &colliders {
             collider.validate()?;
             self.solve_properties(collider.body)?;
@@ -283,8 +369,132 @@ impl SolverWorld {
             collider_metadata_unchanged(&self.colliders, &colliders, key.pair.first())
                 && collider_metadata_unchanged(&self.colliders, &colliders, key.pair.second())
         });
+        self.cached_analytic_contacts.retain(|cached| {
+            collider_metadata_unchanged(&self.colliders, &colliders, cached.body_collider)
+                && self
+                    .analytic_proxies
+                    .binary_search_by_key(&cached.proxy, |proxy| proxy.id)
+                    .is_ok()
+        });
+        self.cached_mesh_contacts.retain(|cached| {
+            collider_metadata_unchanged(&self.colliders, &colliders, cached.body_collider)
+                && self
+                    .meshes
+                    .binary_search_by_key(&cached.key.mesh, DeformingMesh::id)
+                    .is_ok()
+        });
         self.colliders = colliders;
         Ok(())
+    }
+
+    pub fn set_analytic_proxies(
+        &mut self,
+        mut proxies: Vec<AnalyticProxy>,
+    ) -> Result<(), SolverError> {
+        proxies.sort_by_key(|proxy| proxy.id);
+        for pair in proxies.windows(2) {
+            if pair[0].id == pair[1].id {
+                return Err(SolverError::DuplicateId {
+                    kind: "collider",
+                    id: pair[0].id.get(),
+                });
+            }
+        }
+        for proxy in &proxies {
+            proxy.validate()?;
+            if self
+                .colliders
+                .binary_search_by_key(&proxy.id, |collider| collider.id)
+                .is_ok()
+            {
+                return Err(SolverError::DuplicateId {
+                    kind: "collider",
+                    id: proxy.id.get(),
+                });
+            }
+        }
+        self.cached_analytic_contacts.retain(|cached| {
+            analytic_proxy_metadata_unchanged(&self.analytic_proxies, &proxies, cached.proxy)
+                && self
+                    .colliders
+                    .binary_search_by_key(&cached.body_collider, |collider| collider.id)
+                    .is_ok()
+        });
+        self.analytic_proxies = proxies;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn analytic_proxy_count(&self) -> usize {
+        self.analytic_proxies.len()
+    }
+
+    pub fn set_meshes(&mut self, mut meshes: Vec<DeformingMesh>) -> Result<(), SolverError> {
+        meshes.sort_by_key(DeformingMesh::id);
+        for pair in meshes.windows(2) {
+            if pair[0].id() == pair[1].id() {
+                return Err(SolverError::DuplicateId {
+                    kind: "mesh",
+                    id: pair[0].id().get(),
+                });
+            }
+        }
+        self.cached_mesh_contacts.retain(|cached| {
+            mesh_metadata_unchanged(&self.meshes, &meshes, cached.key.mesh)
+                && self
+                    .colliders
+                    .binary_search_by_key(&cached.body_collider, |collider| collider.id)
+                    .is_ok()
+        });
+        self.meshes = meshes;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len()
+    }
+
+    pub fn set_mesh(&mut self, mesh: DeformingMesh) -> Result<(), SolverError> {
+        let id = mesh.id();
+        let mut meshes = core::mem::take(&mut self.meshes);
+        match meshes.binary_search_by_key(&id, DeformingMesh::id) {
+            Ok(index) => meshes[index] = mesh,
+            Err(index) => meshes.insert(index, mesh),
+        }
+        self.set_meshes(meshes)
+    }
+
+    pub fn update_mesh_vertices(
+        &mut self,
+        id: MeshId,
+        previous: Vec<Vec3>,
+        current: Vec<Vec3>,
+    ) -> Result<crate::MeshUpdate, SolverError> {
+        let index = self
+            .meshes
+            .binary_search_by_key(&id, DeformingMesh::id)
+            .map_err(|_| SolverError::invalid_value("mesh_id", id.get()))?;
+        self.meshes[index].update_vertices(previous, current)
+    }
+
+    pub fn remove_mesh(&mut self, id: MeshId) -> Result<(), SolverError> {
+        let index = self
+            .meshes
+            .binary_search_by_key(&id, DeformingMesh::id)
+            .map_err(|_| SolverError::invalid_value("mesh_id", id.get()))?;
+        self.meshes.remove(index);
+        self.cached_mesh_contacts
+            .retain(|cached| cached.key.mesh != id);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn mesh(&self, id: MeshId) -> Option<&DeformingMesh> {
+        self.meshes
+            .binary_search_by_key(&id, DeformingMesh::id)
+            .ok()
+            .map(|index| &self.meshes[index])
     }
 
     #[must_use]
@@ -407,19 +617,26 @@ impl SolverWorld {
         animation_result?;
 
         let started = timings.is_some().then(Instant::now);
-        let contact_result = self.generate_contacts();
+        let contact_result = self.generate_contacts(dt, options.quality);
         record_phase(timings, started, |value, elapsed| {
             value.contact_generation_seconds += elapsed;
         });
-        let generated_contacts = contact_result?;
+        let contact_stats = contact_result?;
+        let generated_contacts = contact_stats.generated_contacts;
 
         let started = timings.is_some().then(Instant::now);
         let schedule = self.constraint_schedule.clone();
         let colliders = self.colliders.clone();
+        let analytic_proxies = self.analytic_proxies.clone();
+        let meshes = core::mem::take(&mut self.meshes);
         let mut constraints = core::mem::take(&mut self.constraints);
         let mut contacts = core::mem::take(&mut self.cached_contacts);
+        let mut analytic_contacts = core::mem::take(&mut self.cached_analytic_contacts);
+        let mut mesh_contacts = core::mem::take(&mut self.cached_mesh_contacts);
         let solve_result = (|| {
             self.warm_start_contacts(&colliders, &contacts)?;
+            self.warm_start_analytic_contacts(&colliders, &analytic_proxies, &analytic_contacts)?;
+            self.warm_start_mesh_contacts(&colliders, &meshes, &mesh_contacts, dt)?;
             for iteration in 0..options.position_iterations {
                 for (_, id) in schedule.iteration_order(iteration) {
                     self.failure_hint = Some(StepFailure::for_constraint(
@@ -435,11 +652,27 @@ impl SolverWorld {
                     self.failure_hint = None;
                 }
                 self.solve_contact_iteration(&colliders, &mut contacts, iteration)?;
+                self.solve_analytic_contact_iteration(
+                    &colliders,
+                    &analytic_proxies,
+                    &mut analytic_contacts,
+                    iteration,
+                )?;
+                self.solve_mesh_contact_iteration(
+                    &colliders,
+                    &meshes,
+                    &mut mesh_contacts,
+                    iteration,
+                    dt,
+                )?;
             }
             Ok::<(), SolverError>(())
         })();
         self.constraints = constraints;
         self.cached_contacts = contacts;
+        self.cached_analytic_contacts = analytic_contacts;
+        self.cached_mesh_contacts = mesh_contacts;
+        self.meshes = meshes;
         record_phase(timings, started, |value, elapsed| {
             value.position_solve_seconds += elapsed;
         });
@@ -489,13 +722,29 @@ impl SolverWorld {
         damping_result?;
 
         let colliders = self.colliders.clone();
+        let analytic_proxies = self.analytic_proxies.clone();
+        let meshes = core::mem::take(&mut self.meshes);
         let mut contacts = core::mem::take(&mut self.cached_contacts);
+        let mut analytic_contacts = core::mem::take(&mut self.cached_analytic_contacts);
+        let mut mesh_contacts = core::mem::take(&mut self.cached_mesh_contacts);
         let velocity_result = self.apply_contact_velocity_response(&colliders, &mut contacts);
+        let analytic_velocity_result = self.apply_analytic_contact_velocity_response(
+            &colliders,
+            &analytic_proxies,
+            &mut analytic_contacts,
+        );
+        let mesh_velocity_result =
+            self.apply_mesh_contact_velocity_response(&colliders, &meshes, &mut mesh_contacts, dt);
         self.cached_contacts = contacts;
+        self.cached_analytic_contacts = analytic_contacts;
+        self.cached_mesh_contacts = mesh_contacts;
+        self.meshes = meshes;
         record_phase(timings, started, |value, elapsed| {
             value.velocity_seconds += elapsed;
         });
         velocity_result?;
+        analytic_velocity_result?;
+        mesh_velocity_result?;
 
         self.target_alpha = target_alpha;
         let _ = options.contact_iterations;
@@ -506,6 +755,9 @@ impl SolverWorld {
             deepest_penetration,
             max_constraint_error,
             position_iterations: options.position_iterations,
+            broad_phase_candidates: contact_stats.broad_phase_candidates,
+            ccd_fallbacks: contact_stats.ccd_fallbacks,
+            ccd_failures: contact_stats.ccd_failures,
             rolled_back: false,
         })
     }
@@ -534,6 +786,8 @@ impl SolverWorld {
             bodies: self.bodies.clone(),
             constraints: self.constraints.clone(),
             cached_contacts: self.cached_contacts.clone(),
+            cached_analytic_contacts: self.cached_analytic_contacts.clone(),
+            cached_mesh_contacts: self.cached_mesh_contacts.clone(),
             target_alpha: self.target_alpha,
         }
     }
@@ -542,6 +796,8 @@ impl SolverWorld {
         self.bodies = snapshot.bodies;
         self.constraints = snapshot.constraints;
         self.cached_contacts = snapshot.cached_contacts;
+        self.cached_analytic_contacts = snapshot.cached_analytic_contacts;
+        self.cached_mesh_contacts = snapshot.cached_mesh_contacts;
         self.target_alpha = snapshot.target_alpha;
         self.failure_hint = None;
     }
@@ -549,10 +805,19 @@ impl SolverWorld {
     fn rollback_diagnostics(&self, position_iterations: u32) -> StepDiagnostics {
         StepDiagnostics {
             generated_contacts: 0,
-            active_contacts: u32::try_from(self.cached_contacts.len()).unwrap_or(u32::MAX),
+            active_contacts: u32::try_from(
+                self.cached_contacts
+                    .len()
+                    .saturating_add(self.cached_analytic_contacts.len())
+                    .saturating_add(self.cached_mesh_contacts.len()),
+            )
+            .unwrap_or(u32::MAX),
             deepest_penetration: 0.0,
             max_constraint_error: 0.0,
             position_iterations,
+            broad_phase_candidates: 0,
+            ccd_fallbacks: 0,
+            ccd_failures: 0,
             rolled_back: true,
         }
     }
@@ -634,6 +899,72 @@ impl SolverWorld {
                 return Some(StepFailure::for_contact(
                     StepFailureKind::ExcessiveContactMultiplier,
                     *key,
+                ));
+            }
+        }
+        for cached in &self.cached_analytic_contacts {
+            let key = cached.key;
+            let contact = cached.contact;
+            if !contact.local_a.is_finite()
+                || !contact.local_b.is_finite()
+                || !contact.normal.is_finite()
+                || contact.tangents.iter().any(|tangent| !tangent.is_finite())
+                || !contact.lambdas.normal.is_finite()
+                || contact
+                    .lambdas
+                    .tangents
+                    .iter()
+                    .any(|lambda| !lambda.is_finite())
+            {
+                return Some(StepFailure::for_contact(
+                    StepFailureKind::InvalidSolverState,
+                    key,
+                ));
+            }
+            let maximum_lambda = contact
+                .lambdas
+                .tangents
+                .iter()
+                .fold(contact.lambdas.normal.abs(), |maximum, lambda| {
+                    maximum.max(lambda.abs())
+                });
+            if maximum_lambda > MAX_MULTIPLIER_MAGNITUDE {
+                return Some(StepFailure::for_contact(
+                    StepFailureKind::ExcessiveContactMultiplier,
+                    key,
+                ));
+            }
+        }
+        for cached in &self.cached_mesh_contacts {
+            let key = cached.key;
+            let contact = cached.contact;
+            if !contact.local_a.is_finite()
+                || !contact.local_b.is_finite()
+                || !contact.normal.is_finite()
+                || contact.tangents.iter().any(|tangent| !tangent.is_finite())
+                || !contact.lambdas.normal.is_finite()
+                || contact
+                    .lambdas
+                    .tangents
+                    .iter()
+                    .any(|lambda| !lambda.is_finite())
+            {
+                return Some(StepFailure::for_mesh_contact(
+                    StepFailureKind::InvalidSolverState,
+                    key,
+                ));
+            }
+            let maximum_lambda = contact
+                .lambdas
+                .tangents
+                .iter()
+                .fold(contact.lambdas.normal.abs(), |maximum, lambda| {
+                    maximum.max(lambda.abs())
+                });
+            if maximum_lambda > MAX_MULTIPLIER_MAGNITUDE {
+                return Some(StepFailure::for_mesh_contact(
+                    StepFailureKind::ExcessiveContactMultiplier,
+                    key,
                 ));
             }
         }
@@ -731,6 +1062,236 @@ impl SolverWorld {
             .binary_search_by_key(&id, |entry| entry.desc.id)
             .ok()
             .map(|index| &self.bodies[index].state)
+    }
+
+    /// Returns the canonical identity of all static and input state that can
+    /// affect a future solve. Dynamic poses and contact multipliers are not
+    /// included, so a checkpoint can be restored after the world has advanced.
+    #[must_use]
+    pub fn world_fingerprint(&self) -> WorldFingerprint {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"xpbd-world-fingerprint-v1");
+        write_vec3(&mut bytes, self.config.gravity);
+        write_f32(&mut bytes, self.config.fixed_dt);
+
+        write_u32(&mut bytes, self.bodies.len() as u32);
+        for entry in &self.bodies {
+            write_u32(&mut bytes, entry.desc.id.get());
+            write_pose(&mut bytes, entry.desc.rest_pose);
+            write_vec3(&mut bytes, entry.desc.local_center_of_mass);
+            write_vec3(&mut bytes, entry.desc.local_head);
+            write_vec3(&mut bytes, entry.desc.local_tail);
+            write_f32(&mut bytes, entry.desc.inverse_mass);
+            write_vec3(&mut bytes, entry.desc.inverse_inertia);
+            write_f32(&mut bytes, entry.desc.gravity_scale);
+            write_f32(&mut bytes, entry.desc.linear_damping);
+            write_f32(&mut bytes, entry.desc.angular_damping);
+        }
+
+        let mut static_constraints = self.constraints.clone();
+        for constraint in &mut static_constraints {
+            constraint.lambda = Vec3::ZERO;
+        }
+        write_debug(&mut bytes, &static_constraints);
+        write_debug(&mut bytes, &self.colliders);
+        write_debug(&mut bytes, &self.analytic_proxies);
+        write_u32(&mut bytes, self.meshes.len() as u32);
+        for mesh in &self.meshes {
+            write_u32(&mut bytes, mesh.id().get());
+            write_debug(&mut bytes, mesh.topology());
+            write_f32(&mut bytes, mesh.thickness());
+            write_debug(&mut bytes, mesh.body_region_ignores());
+        }
+
+        write_u32(&mut bytes, self.animation_targets.len() as u32);
+        for (id, target) in &self.animation_targets {
+            write_u32(&mut bytes, id.get());
+            write_pose(&mut bytes, target.previous);
+            write_pose(&mut bytes, target.current);
+            write_f32(&mut bytes, target.translation_inertia);
+            write_f32(&mut bytes, target.rotation_inertia);
+        }
+
+        WorldFingerprint::hash_canonical(&bytes)
+    }
+
+    #[must_use]
+    pub fn configuration_fingerprint(&self) -> WorldFingerprint {
+        self.world_fingerprint()
+    }
+
+    /// Encodes dynamic solver state with a versioned, checksummed envelope.
+    pub fn encode_checkpoint(&self) -> Result<Vec<u8>, SolverError> {
+        if self.paused {
+            return Err(SolverError::WorldPaused);
+        }
+        let fingerprint = self.world_fingerprint();
+        let mut encoder = Encoder::new();
+        encoder.f32(self.target_alpha);
+        encoder.u8(u8::from(self.paused));
+
+        encoder.u32(self.bodies.len() as u32);
+        for entry in &self.bodies {
+            encoder.u32(entry.desc.id.get());
+            write_pose_encoder(&mut encoder, entry.state.pose);
+            write_pose_encoder(&mut encoder, entry.state.previous_pose);
+            write_pose_encoder(&mut encoder, entry.state.predicted_pose);
+            write_pose_encoder(&mut encoder, entry.state.integrated_pose);
+            write_vec3_encoder(&mut encoder, entry.state.velocity.linear);
+            write_vec3_encoder(&mut encoder, entry.state.velocity.angular);
+            write_vec3_encoder(&mut encoder, entry.state.contact_translation_correction);
+            write_vec3_encoder(&mut encoder, entry.state.contact_rotation_correction);
+        }
+
+        encoder.u32(self.constraints.len() as u32);
+        for constraint in &self.constraints {
+            encoder.u32(constraint.id.get());
+            encoder.u8(u8::from(constraint.enabled));
+            write_vec3_encoder(&mut encoder, constraint.lambda);
+        }
+
+        encoder.u32(self.cached_contacts.len() as u32);
+        for (key, contact) in &self.cached_contacts {
+            write_u32_encoder(&mut encoder, key.pair.first().get());
+            write_u32_encoder(&mut encoder, key.pair.second().get());
+            write_u32_encoder(&mut encoder, key.feature_a);
+            write_u32_encoder(&mut encoder, key.feature_b);
+            write_contact_encoder(&mut encoder, *contact);
+        }
+
+        encoder.u32(self.cached_analytic_contacts.len() as u32);
+        for cached in &self.cached_analytic_contacts {
+            write_u32_encoder(&mut encoder, cached.key.pair.first().get());
+            write_u32_encoder(&mut encoder, cached.key.pair.second().get());
+            write_u32_encoder(&mut encoder, cached.key.feature_a);
+            write_u32_encoder(&mut encoder, cached.key.feature_b);
+            write_u32_encoder(&mut encoder, cached.body_collider.get());
+            write_u32_encoder(&mut encoder, cached.proxy.get());
+            encoder.u8(u8::from(cached.was_separated));
+            write_contact_encoder(&mut encoder, cached.contact);
+        }
+
+        encoder.u32(self.cached_mesh_contacts.len() as u32);
+        for cached in &self.cached_mesh_contacts {
+            write_u32_encoder(&mut encoder, cached.key.collider.get());
+            write_u32_encoder(&mut encoder, cached.key.mesh.get());
+            write_u32_encoder(&mut encoder, cached.key.triangle.get());
+            write_u32_encoder(&mut encoder, cached.key.feature);
+            write_u32_encoder(&mut encoder, cached.source_triangle.get());
+            write_u32_encoder(&mut encoder, cached.body_collider.get());
+            encoder.u8(u8::from(cached.was_separated));
+            write_contact_encoder(&mut encoder, cached.contact);
+        }
+
+        encoder.u32(self.meshes.len() as u32);
+        for mesh in &self.meshes {
+            encoder.u32(mesh.id().get());
+            write_positions_encoder(&mut encoder, mesh.previous_positions());
+            write_positions_encoder(&mut encoder, mesh.current_positions());
+        }
+
+        Ok(wrap_payload(fingerprint, encoder.finish()))
+    }
+
+    /// Validates and restores a checkpoint atomically.
+    pub fn restore_checkpoint(
+        &mut self,
+        bytes: &[u8],
+        expected_fingerprint: WorldFingerprint,
+    ) -> Result<(), SolverError> {
+        if self.world_fingerprint() != expected_fingerprint {
+            return Err(SolverError::invalid_value("world_fingerprint", 0));
+        }
+        let payload = unwrap_payload(bytes, expected_fingerprint)?;
+        let mut candidate = self.clone();
+        candidate.restore_checkpoint_payload(payload)?;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn restore_checkpoint_payload(&mut self, payload: &[u8]) -> Result<(), SolverError> {
+        let mut decoder = Decoder::new(payload);
+        self.target_alpha = decoder.f32()?;
+        let paused = decoder.u8()?;
+        if paused > 1 {
+            return Err(SolverError::invalid_value("checkpoint_paused", paused));
+        }
+
+        let body_count = decoder.count("checkpoint_bodies")?;
+        if body_count != self.bodies.len() {
+            return Err(SolverError::invalid_value(
+                "checkpoint_body_count",
+                body_count as f64,
+            ));
+        }
+        for _ in 0..body_count {
+            let id = BodyId::new(decoder.u32()?);
+            let index = self
+                .bodies
+                .binary_search_by_key(&id, |entry| entry.desc.id)
+                .map_err(|_| SolverError::MissingBody(id.get()))?;
+            let state = &mut self.bodies[index].state;
+            state.pose = read_pose(&mut decoder)?;
+            state.previous_pose = read_pose(&mut decoder)?;
+            state.predicted_pose = read_pose(&mut decoder)?;
+            state.integrated_pose = read_pose(&mut decoder)?;
+            state.velocity.linear = read_vec3(&mut decoder)?;
+            state.velocity.angular = read_vec3(&mut decoder)?;
+            state.contact_translation_correction = read_vec3(&mut decoder)?;
+            state.contact_rotation_correction = read_vec3(&mut decoder)?;
+        }
+
+        let constraint_count = decoder.count("checkpoint_constraints")?;
+        if constraint_count != self.constraints.len() {
+            return Err(SolverError::invalid_value(
+                "checkpoint_constraint_count",
+                constraint_count as f64,
+            ));
+        }
+        for _ in 0..constraint_count {
+            let id = crate::ConstraintId::new(decoder.u32()?);
+            let index = self
+                .constraints
+                .binary_search_by_key(&id, |constraint| constraint.id)
+                .map_err(|_| SolverError::invalid_value("checkpoint_constraint_id", id.get()))?;
+            let enabled = decoder.u8()?;
+            if enabled > 1 {
+                return Err(SolverError::invalid_value("checkpoint_enabled", enabled));
+            }
+            self.constraints[index].enabled = enabled != 0;
+            self.constraints[index].lambda = read_vec3(&mut decoder)?;
+        }
+
+        self.cached_contacts = read_cached_contacts(&mut decoder)?;
+        self.cached_analytic_contacts = read_analytic_contacts(&mut decoder)?;
+        self.cached_mesh_contacts = read_mesh_contacts(&mut decoder)?;
+
+        let mesh_count = decoder.count("checkpoint_meshes")?;
+        if mesh_count != self.meshes.len() {
+            return Err(SolverError::invalid_value(
+                "checkpoint_mesh_count",
+                mesh_count as f64,
+            ));
+        }
+        for _ in 0..mesh_count {
+            let id = MeshId::new(decoder.u32()?);
+            let previous = read_positions(&mut decoder)?;
+            let current = read_positions(&mut decoder)?;
+            let mesh = self
+                .meshes
+                .iter_mut()
+                .find(|mesh| mesh.id() == id)
+                .ok_or_else(|| SolverError::invalid_value("checkpoint_mesh_id", id.get()))?;
+            mesh.update_vertices(previous, current)?;
+        }
+
+        if !decoder.is_done() {
+            return Err(SolverError::invalid_value("checkpoint_trailing_bytes", 0));
+        }
+        self.paused = paused != 0;
+        self.last_failure = None;
+        self.failure_hint = None;
+        Ok(())
     }
 
     pub fn anchor_error(&self, id: ConstraintId) -> Result<f32, SolverError> {
@@ -837,10 +1398,17 @@ impl SolverWorld {
         Ok(maximum)
     }
 
-    fn generate_contacts(&mut self) -> Result<u32, SolverError> {
+    fn generate_contacts(
+        &mut self,
+        dt: f32,
+        quality: QualityPolicy,
+    ) -> Result<ContactGenerationStats, SolverError> {
         let (previous, predicted) = self.collider_snapshots()?;
         let pipeline = CollisionPipeline::try_new(&self.constraints)?;
         let candidates = pipeline.candidate_pairs(&previous, &predicted)?;
+        let broad_phase_candidates = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
+        let mut ccd_fallbacks: u32 = 0;
+        let mut ccd_failures: u32 = 0;
         let mut generated = Vec::new();
 
         for pair in candidates {
@@ -853,11 +1421,7 @@ impl SolverWorld {
             let collider_a = collider_by_id(&predicted, pair.first())?;
             let collider_b = collider_by_id(&predicted, pair.second())?;
             let cached_normal = cached_normal_for_pair(&self.cached_contacts, pair);
-            let Some(manifold) = crate::capsule_manifold(collider_a, collider_b, cached_normal)?
-            else {
-                self.failure_hint = None;
-                continue;
-            };
+            let manifold = crate::capsule_manifold(collider_a, collider_b, cached_normal)?;
             let radius_a = collider_a.shape.effective_radius()?;
             let radius_b = collider_b.shape.effective_radius()?;
             let match_context = ContactMatchContext {
@@ -867,21 +1431,39 @@ impl SolverWorld {
                 current_b: collider_b.pose,
                 radius_sum: radius_a + radius_b,
             };
-            let mut current_contacts = Vec::with_capacity(manifold.points.len());
-
-            for geometry in manifold.points {
-                let center_a = geometry.point_a - geometry.normal * radius_a;
-                let center_b = geometry.point_b + geometry.normal * radius_b;
-                let contact = CachedContact {
-                    local_a: local_point(collider_a.pose, center_a),
-                    local_b: local_point(collider_b.pose, center_b),
-                    normal: geometry.normal,
-                    tangents: tangent_basis(geometry.normal),
-                    lambdas: ContactLambdas::default(),
-                    age: 1,
-                };
-                contact.validate()?;
-                current_contacts.push(contact);
+            let mut current_contacts = Vec::new();
+            if let Some(manifold) = manifold {
+                current_contacts.reserve(manifold.points.len());
+                for geometry in manifold.points {
+                    current_contacts.push(cached_contact_from_geometry(
+                        collider_a, collider_b, geometry,
+                    )?);
+                }
+            } else if !matches!(quality, QualityPolicy::ApproximatePreview { .. }) {
+                match capsule_capsule_toi(previous_a, collider_a, previous_b, collider_b, dt)? {
+                    CcdResult::Impact {
+                        geometry: CcdGeometry::Capsule(geometry),
+                        ..
+                    } => current_contacts.push(cached_contact_from_geometry(
+                        collider_a, collider_b, geometry,
+                    )?),
+                    CcdResult::Failed {
+                        fallback: Some(CcdGeometry::Capsule(geometry)),
+                    } => {
+                        ccd_fallbacks = ccd_fallbacks.saturating_add(1);
+                        current_contacts.push(cached_contact_from_geometry(
+                            collider_a, collider_b, geometry,
+                        )?);
+                    }
+                    CcdResult::Failed { .. } => {
+                        ccd_failures = ccd_failures.saturating_add(1);
+                    }
+                    CcdResult::NoImpact | CcdResult::Impact { .. } => {}
+                }
+            }
+            if current_contacts.is_empty() {
+                self.failure_hint = None;
+                continue;
             }
             let previous_contacts: Vec<_> = self
                 .cached_contacts
@@ -900,7 +1482,207 @@ impl SolverWorld {
 
         generated.sort_by_key(|(key, _)| *key);
         self.cached_contacts = generated;
-        contact_count(self.cached_contacts.len())
+        let analytic_count = self.generate_analytic_contacts(&previous, &predicted, dt)?;
+        let meshes = core::mem::take(&mut self.meshes);
+        let mesh_result = self.generate_mesh_contacts(&meshes, &previous, &predicted, dt);
+        self.meshes = meshes;
+        let mesh_count = mesh_result?;
+        let total = self
+            .cached_contacts
+            .len()
+            .checked_add(analytic_count)
+            .and_then(|count| count.checked_add(mesh_count))
+            .ok_or_else(|| SolverError::invalid_value("contact_count", usize::MAX as f64))?;
+        Ok(ContactGenerationStats {
+            generated_contacts: contact_count(total)?,
+            broad_phase_candidates,
+            ccd_fallbacks,
+            ccd_failures,
+        })
+    }
+
+    fn generate_analytic_contacts(
+        &mut self,
+        previous: &[CapsuleCollider],
+        predicted: &[CapsuleCollider],
+        dt: f32,
+    ) -> Result<usize, SolverError> {
+        let proxies = self.analytic_proxies.clone();
+        let mut generated = Vec::new();
+        for collider in predicted {
+            let previous_collider = collider_by_id(previous, collider.id)?;
+            let radius = collider.shape.effective_radius()?;
+            for proxy in &proxies {
+                if !proxy.collision_enabled {
+                    continue;
+                }
+                let pair = PairKey::ordered(collider.id, proxy.id)?;
+                self.failure_hint = Some(StepFailure::for_contact(
+                    StepFailureKind::InvalidSolverState,
+                    ContactKey::new(pair, 0, 0),
+                ));
+                let Some(geometry) = crate::capsule_analytic_contact(collider, proxy, dt)? else {
+                    self.failure_hint = None;
+                    continue;
+                };
+                let body_first = pair.first() == collider.id;
+                let body_to_proxy = geometry.normal;
+                let pair_normal = if body_first {
+                    body_to_proxy
+                } else {
+                    -body_to_proxy
+                };
+                let body_center = geometry.point_capsule - body_to_proxy * radius;
+                let body_local = local_point(collider.pose, body_center);
+                let proxy_local = local_point(proxy.pose, geometry.point_proxy);
+                let mut contact = CachedContact {
+                    local_a: if body_first { body_local } else { proxy_local },
+                    local_b: if body_first { proxy_local } else { body_local },
+                    normal: pair_normal,
+                    tangents: tangent_basis(pair_normal),
+                    lambdas: ContactLambdas::default(),
+                    age: 1,
+                };
+                let key = ContactKey::new(pair, 0, 0);
+                if let Some(previous_cached) = self
+                    .cached_analytic_contacts
+                    .iter()
+                    .find(|cached| cached.key == key)
+                    && analytic_contact_matches(&contact, &previous_cached.contact, radius)?
+                {
+                    contact.lambdas = previous_cached.contact.lambdas;
+                    contact.age = previous_cached.contact.age.checked_add(1).ok_or_else(|| {
+                        SolverError::invalid_value("contact_age", previous_cached.contact.age)
+                    })?;
+                }
+                contact.validate()?;
+
+                let mut previous_proxy = *proxy;
+                previous_proxy.pose.translation -= proxy.linear_velocity * dt;
+                previous_proxy.linear_velocity = Vec3::ZERO;
+                let mut stationary_previous = previous_collider.clone();
+                stationary_previous.linear_velocity = Vec3::ZERO;
+                let was_separated =
+                    crate::capsule_analytic_contact(&stationary_previous, &previous_proxy, dt)?
+                        .is_none();
+                generated.push(AnalyticCachedContact {
+                    key,
+                    body_collider: collider.id,
+                    proxy: proxy.id,
+                    contact,
+                    was_separated,
+                });
+                self.failure_hint = None;
+            }
+        }
+        generated.sort_by_key(|cached| cached.key);
+        self.cached_analytic_contacts = generated;
+        Ok(self.cached_analytic_contacts.len())
+    }
+
+    fn generate_mesh_contacts(
+        &mut self,
+        meshes: &[DeformingMesh],
+        previous: &[CapsuleCollider],
+        predicted: &[CapsuleCollider],
+        dt: f32,
+    ) -> Result<usize, SolverError> {
+        let mut generated = Vec::new();
+        for collider in predicted {
+            let previous_collider = collider_by_id(previous, collider.id)?;
+            let radius = collider.shape.effective_radius()?;
+            for mesh in meshes {
+                let candidates = mesh.query_capsule_sweep(previous_collider, collider)?;
+                let mut raw = Vec::new();
+                for triangle_id in candidates {
+                    self.failure_hint = Some(StepFailure::for_mesh_contact(
+                        StepFailureKind::InvalidSolverState,
+                        MeshContactKey {
+                            collider: collider.id,
+                            mesh: mesh.id(),
+                            triangle: triangle_id,
+                            feature: 0,
+                        },
+                    ));
+                    let history = self
+                        .cached_mesh_contacts
+                        .iter()
+                        .find(|cached| {
+                            cached.body_collider == collider.id
+                                && cached.key.mesh == mesh.id()
+                                && cached.source_triangle == triangle_id
+                        })
+                        .map(|cached| MeshContactHistory {
+                            normal: cached.contact.normal,
+                        });
+                    let triangle = mesh.moving_triangle(triangle_id, dt)?;
+                    if !mesh.body_sees_region(collider.body, triangle.region) {
+                        self.failure_hint = None;
+                        continue;
+                    }
+                    if let Some(contact) = capsule_triangle_contact(collider, &triangle, history)? {
+                        raw.push(contact);
+                    }
+                    self.failure_hint = None;
+                }
+                let limits = MeshManifoldLimits::try_new(4, radius * 0.25, 0.95)?;
+                for geometry in cluster_mesh_contacts(raw, limits)? {
+                    self.failure_hint = Some(StepFailure::for_mesh_contact(
+                        StepFailureKind::InvalidSolverState,
+                        geometry.key,
+                    ));
+                    let body_center = geometry.geometry.point_a - geometry.geometry.normal * radius;
+                    let mut contact = CachedContact {
+                        local_a: local_point(collider.pose, body_center),
+                        local_b: geometry.barycentric,
+                        normal: geometry.geometry.normal,
+                        tangents: tangent_basis(geometry.geometry.normal),
+                        lambdas: ContactLambdas::default(),
+                        age: 1,
+                    };
+                    if let Some(previous_cached) = self
+                        .cached_mesh_contacts
+                        .iter()
+                        .find(|cached| cached.key == geometry.key)
+                        && mesh_contact_matches(&contact, &previous_cached.contact, radius)?
+                    {
+                        contact.lambdas = previous_cached.contact.lambdas;
+                        contact.age =
+                            previous_cached.contact.age.checked_add(1).ok_or_else(|| {
+                                SolverError::invalid_value(
+                                    "contact_age",
+                                    previous_cached.contact.age,
+                                )
+                            })?;
+                    }
+                    contact.validate()?;
+
+                    let mut previous_triangle =
+                        mesh.moving_triangle(geometry.source_triangle, dt)?;
+                    for index in 0..3 {
+                        previous_triangle.vertices[index] -=
+                            previous_triangle.velocities[index] * dt;
+                        previous_triangle.velocities[index] = Vec3::ZERO;
+                    }
+                    let mut stationary_previous = previous_collider.clone();
+                    stationary_previous.linear_velocity = Vec3::ZERO;
+                    let was_separated =
+                        capsule_triangle_contact(&stationary_previous, &previous_triangle, None)?
+                            .is_none();
+                    generated.push(MeshCachedContact {
+                        key: geometry.key,
+                        source_triangle: geometry.source_triangle,
+                        body_collider: collider.id,
+                        contact,
+                        was_separated,
+                    });
+                    self.failure_hint = None;
+                }
+            }
+        }
+        generated.sort_by_key(|cached| cached.key);
+        self.cached_mesh_contacts = generated;
+        Ok(self.cached_mesh_contacts.len())
     }
 
     fn warm_start_contacts(
@@ -915,6 +1697,30 @@ impl SolverWorld {
             ));
             if contact.lambdas.normal > 0.0 {
                 self.apply_contact_lambda(colliders, *key, contact, contact.lambdas.normal)?;
+            }
+            self.failure_hint = None;
+        }
+        Ok(())
+    }
+
+    fn warm_start_analytic_contacts(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        contacts: &[AnalyticCachedContact],
+    ) -> Result<(), SolverError> {
+        for cached in contacts {
+            self.failure_hint = Some(StepFailure::for_contact(
+                StepFailureKind::InvalidSolverState,
+                cached.key,
+            ));
+            if cached.contact.lambdas.normal > 0.0 {
+                self.apply_analytic_contact_lambda(
+                    colliders,
+                    proxies,
+                    cached,
+                    cached.contact.lambdas.normal,
+                )?;
             }
             self.failure_hint = None;
         }
@@ -947,6 +1753,284 @@ impl SolverWorld {
             }
         }
         Ok(())
+    }
+
+    fn solve_analytic_contact_iteration(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        contacts: &mut [AnalyticCachedContact],
+        iteration: u32,
+    ) -> Result<(), SolverError> {
+        if iteration.is_multiple_of(2) {
+            for cached in contacts {
+                self.solve_analytic_contact(colliders, proxies, cached)?;
+            }
+        } else {
+            for cached in contacts.iter_mut().rev() {
+                self.solve_analytic_contact(colliders, proxies, cached)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn solve_analytic_contact(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        cached: &mut AnalyticCachedContact,
+    ) -> Result<(), SolverError> {
+        self.failure_hint = Some(StepFailure::for_contact(
+            StepFailureKind::InvalidSolverState,
+            cached.key,
+        ));
+        cached.contact.validate()?;
+        let geometry = self.analytic_contact_geometry(colliders, proxies, cached)?;
+        let properties = self.solve_properties(geometry.body)?;
+        let linear = -geometry.body_to_proxy;
+        let angular = -geometry.surface_offset.cross(geometry.body_to_proxy);
+        let inverse_mass = properties.inverse_mass * linear.length_squared()
+            + angular.dot(properties.world_inverse_inertia * angular);
+        validate_nonnegative("analytic_contact_inverse_mass", inverse_mass)?;
+        if inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            self.failure_hint = None;
+            return Ok(());
+        }
+        let unconstrained_delta = -geometry.separation / inverse_mass;
+        validate_finite("analytic_contact_delta_lambda", unconstrained_delta)?;
+        let previous_lambda = cached.contact.lambdas.normal;
+        let next_lambda = (previous_lambda + unconstrained_delta).max(0.0);
+        let delta_lambda = next_lambda - previous_lambda;
+        if delta_lambda != 0.0 {
+            self.apply_analytic_contact_lambda(colliders, proxies, cached, delta_lambda)?;
+        }
+        cached.contact.lambdas.normal = next_lambda;
+        self.failure_hint = None;
+        Ok(())
+    }
+
+    fn apply_analytic_contact_lambda(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        cached: &AnalyticCachedContact,
+        delta_lambda: f32,
+    ) -> Result<(), SolverError> {
+        validate_finite("analytic_contact_delta_lambda", delta_lambda)?;
+        let geometry = self.analytic_contact_geometry(colliders, proxies, cached)?;
+        let properties = self.solve_properties(geometry.body)?;
+        let linear = -geometry.body_to_proxy;
+        let angular = -geometry.surface_offset.cross(geometry.body_to_proxy);
+        self.apply_pose_correction(
+            geometry.body,
+            linear * properties.inverse_mass * delta_lambda,
+            properties.world_inverse_inertia * angular * delta_lambda,
+            CorrectionKind::NonVelocityContact,
+        )
+    }
+
+    fn analytic_contact_geometry(
+        &self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        cached: &AnalyticCachedContact,
+    ) -> Result<AnalyticContactGeometry, SolverError> {
+        let collider = collider_desc_by_id(colliders, cached.body_collider)?;
+        let proxy = analytic_proxy_by_id(proxies, cached.proxy)?;
+        let body_first = cached.key.pair.first() == collider.id;
+        if cached.key.pair != PairKey::ordered(collider.id, proxy.id)? {
+            return Err(SolverError::invalid_value(
+                "analytic_contact_pair",
+                cached.key.pair.first().get(),
+            ));
+        }
+        let body_local = if body_first {
+            cached.contact.local_a
+        } else {
+            cached.contact.local_b
+        };
+        let proxy_local = if body_first {
+            cached.contact.local_b
+        } else {
+            cached.contact.local_a
+        };
+        let body_to_proxy = if body_first {
+            cached.contact.normal
+        } else {
+            -cached.contact.normal
+        };
+        let (body_center, center_offset) = self.anchor_geometry(collider.body, body_local)?;
+        let radius = collider.shape.effective_radius()?;
+        let surface_offset = center_offset + body_to_proxy * radius;
+        let body_surface = body_center + body_to_proxy * radius;
+        let proxy_surface = proxy.pose.translation + proxy.pose.rotation * proxy_local;
+        validate_vec3("analytic_contact_body_surface", body_surface)?;
+        validate_vec3("analytic_contact_proxy_surface", proxy_surface)?;
+        validate_vec3("analytic_contact_surface_offset", surface_offset)?;
+        let separation = (proxy_surface - body_surface).dot(body_to_proxy);
+        validate_finite("analytic_contact_separation", separation)?;
+        Ok(AnalyticContactGeometry {
+            body: collider.body,
+            body_to_proxy,
+            surface_offset,
+            separation,
+            proxy_velocity: proxy.linear_velocity,
+        })
+    }
+
+    fn warm_start_mesh_contacts(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        contacts: &[MeshCachedContact],
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        for cached in contacts {
+            self.failure_hint = Some(StepFailure::for_mesh_contact(
+                StepFailureKind::InvalidSolverState,
+                cached.key,
+            ));
+            if cached.contact.lambdas.normal > 0.0 {
+                self.apply_mesh_contact_lambda(
+                    colliders,
+                    meshes,
+                    cached,
+                    cached.contact.lambdas.normal,
+                    dt,
+                )?;
+            }
+            self.failure_hint = None;
+        }
+        Ok(())
+    }
+
+    fn solve_mesh_contact_iteration(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        contacts: &mut [MeshCachedContact],
+        iteration: u32,
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        if iteration.is_multiple_of(2) {
+            for cached in contacts {
+                self.solve_mesh_contact(colliders, meshes, cached, dt)?;
+            }
+        } else {
+            for cached in contacts.iter_mut().rev() {
+                self.solve_mesh_contact(colliders, meshes, cached, dt)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn solve_mesh_contact(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        cached: &mut MeshCachedContact,
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        self.failure_hint = Some(StepFailure::for_mesh_contact(
+            StepFailureKind::InvalidSolverState,
+            cached.key,
+        ));
+        cached.contact.validate()?;
+        let geometry = self.mesh_contact_geometry(colliders, meshes, cached, dt)?;
+        let properties = self.solve_properties(geometry.body)?;
+        let linear = -geometry.body_to_mesh;
+        let angular = -geometry.surface_offset.cross(geometry.body_to_mesh);
+        let inverse_mass = properties.inverse_mass * linear.length_squared()
+            + angular.dot(properties.world_inverse_inertia * angular);
+        validate_nonnegative("mesh_contact_inverse_mass", inverse_mass)?;
+        if inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            self.failure_hint = None;
+            return Ok(());
+        }
+        let unconstrained_delta = -geometry.separation / inverse_mass;
+        validate_finite("mesh_contact_delta_lambda", unconstrained_delta)?;
+        let previous_lambda = cached.contact.lambdas.normal;
+        let next_lambda = (previous_lambda + unconstrained_delta).max(0.0);
+        let delta_lambda = next_lambda - previous_lambda;
+        if delta_lambda != 0.0 {
+            self.apply_mesh_contact_lambda(colliders, meshes, cached, delta_lambda, dt)?;
+        }
+        cached.contact.lambdas.normal = next_lambda;
+        self.failure_hint = None;
+        Ok(())
+    }
+
+    fn apply_mesh_contact_lambda(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        cached: &MeshCachedContact,
+        delta_lambda: f32,
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        validate_finite("mesh_contact_delta_lambda", delta_lambda)?;
+        let geometry = self.mesh_contact_geometry(colliders, meshes, cached, dt)?;
+        let properties = self.solve_properties(geometry.body)?;
+        let linear = -geometry.body_to_mesh;
+        let angular = -geometry.surface_offset.cross(geometry.body_to_mesh);
+        self.apply_pose_correction(
+            geometry.body,
+            linear * properties.inverse_mass * delta_lambda,
+            properties.world_inverse_inertia * angular * delta_lambda,
+            CorrectionKind::NonVelocityContact,
+        )
+    }
+
+    fn mesh_contact_geometry(
+        &self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        cached: &MeshCachedContact,
+        dt: f32,
+    ) -> Result<MeshContactSolveGeometry, SolverError> {
+        let collider = collider_desc_by_id(colliders, cached.body_collider)?;
+        if cached.key.collider != collider.id {
+            return Err(SolverError::invalid_value(
+                "mesh_contact_collider",
+                cached.key.collider.get(),
+            ));
+        }
+        let mesh = mesh_by_id(meshes, cached.key.mesh)?;
+        let triangle = mesh.moving_triangle(cached.source_triangle, dt)?;
+        let barycentric = cached.contact.local_b;
+        validate_vec3("mesh_contact_barycentric", barycentric)?;
+        if barycentric.min_element() < -1.0e-4 || (barycentric.element_sum() - 1.0).abs() > 1.0e-4 {
+            return Err(SolverError::invalid_value(
+                "mesh_contact_barycentric",
+                barycentric.element_sum(),
+            ));
+        }
+        let body_to_mesh = cached.contact.normal;
+        let (body_center, center_offset) =
+            self.anchor_geometry(collider.body, cached.contact.local_a)?;
+        let radius = collider.shape.effective_radius()?;
+        let surface_offset = center_offset + body_to_mesh * radius;
+        let body_surface = body_center + body_to_mesh * radius;
+        let triangle_center = triangle.vertices[0] * barycentric.x
+            + triangle.vertices[1] * barycentric.y
+            + triangle.vertices[2] * barycentric.z;
+        let mesh_surface = triangle_center - body_to_mesh * triangle.thickness;
+        let surface_velocity = triangle.velocities[0] * barycentric.x
+            + triangle.velocities[1] * barycentric.y
+            + triangle.velocities[2] * barycentric.z;
+        validate_vec3("mesh_contact_body_surface", body_surface)?;
+        validate_vec3("mesh_contact_surface", mesh_surface)?;
+        validate_vec3("mesh_contact_surface_offset", surface_offset)?;
+        validate_vec3("mesh_contact_surface_velocity", surface_velocity)?;
+        let separation = (mesh_surface - body_surface).dot(body_to_mesh);
+        validate_finite("mesh_contact_separation", separation)?;
+        Ok(MeshContactSolveGeometry {
+            body: collider.body,
+            body_to_mesh,
+            surface_offset,
+            separation,
+            surface_velocity,
+        })
     }
 
     fn solve_contact(
@@ -1060,6 +2144,242 @@ impl SolverWorld {
             self.failure_hint = None;
         }
         Ok(())
+    }
+
+    fn apply_analytic_contact_velocity_response(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        contacts: &mut [AnalyticCachedContact],
+    ) -> Result<(), SolverError> {
+        for cached in contacts {
+            self.failure_hint = Some(StepFailure::for_contact(
+                StepFailureKind::InvalidSolverState,
+                cached.key,
+            ));
+            self.solve_analytic_contact_velocity(colliders, proxies, cached)?;
+            self.failure_hint = None;
+        }
+        Ok(())
+    }
+
+    fn solve_analytic_contact_velocity(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        proxies: &[AnalyticProxy],
+        cached: &mut AnalyticCachedContact,
+    ) -> Result<(), SolverError> {
+        cached.contact.validate()?;
+        cached.contact.lambdas.tangents = [0.0; 2];
+        let collider = collider_desc_by_id(colliders, cached.body_collider)?;
+        let geometry = self.analytic_contact_geometry(colliders, proxies, cached)?;
+        if geometry.separation > CONTACT_SEPARATION_TOLERANCE {
+            return Ok(());
+        }
+        let body_state = self
+            .body(geometry.body)
+            .ok_or(SolverError::MissingBody(geometry.body.get()))?;
+        let body_velocity =
+            body_state.velocity.linear + body_state.velocity.angular.cross(geometry.surface_offset);
+        let relative_velocity = geometry.proxy_velocity - body_velocity;
+        validate_vec3(
+            "analytic_contact_relative_surface_velocity",
+            relative_velocity,
+        )?;
+        let normal_velocity = relative_velocity.dot(geometry.body_to_proxy);
+        validate_finite("analytic_contact_normal_velocity", normal_velocity)?;
+        if normal_velocity >= 0.0 {
+            return Ok(());
+        }
+
+        let restitution = if cached.contact.age == 1 && cached.was_separated {
+            collider.material.restitution
+        } else {
+            0.0
+        };
+        let target_normal_velocity = -restitution * normal_velocity;
+        validate_nonnegative(
+            "analytic_contact_target_normal_velocity",
+            target_normal_velocity,
+        )?;
+        let properties = self.solve_properties(geometry.body)?;
+        let normal_linear = -geometry.body_to_proxy;
+        let normal_angular = -geometry.surface_offset.cross(geometry.body_to_proxy);
+        let normal_inverse_mass = properties.inverse_mass * normal_linear.length_squared()
+            + normal_angular.dot(properties.world_inverse_inertia * normal_angular);
+        validate_nonnegative("analytic_contact_normal_inverse_mass", normal_inverse_mass)?;
+        if normal_inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+        let normal_impulse =
+            ((target_normal_velocity - normal_velocity) / normal_inverse_mass).max(0.0);
+        validate_nonnegative("analytic_contact_normal_impulse", normal_impulse)?;
+        if normal_impulse == 0.0 {
+            return Ok(());
+        }
+        self.apply_velocity_impulse(geometry.body, normal_linear, normal_angular, normal_impulse)?;
+
+        let body_state = self
+            .body(geometry.body)
+            .ok_or(SolverError::MissingBody(geometry.body.get()))?;
+        let body_velocity =
+            body_state.velocity.linear + body_state.velocity.angular.cross(geometry.surface_offset);
+        let relative_velocity = geometry.proxy_velocity - body_velocity;
+        let tangential_velocity = relative_velocity
+            - geometry.body_to_proxy * relative_velocity.dot(geometry.body_to_proxy);
+        validate_vec3("analytic_contact_tangential_velocity", tangential_velocity)?;
+        let tangential_speed = tangential_velocity.length();
+        validate_nonnegative("analytic_contact_tangential_speed", tangential_speed)?;
+        if tangential_speed <= MIN_CONTACT_DENOMINATOR.sqrt() {
+            return Ok(());
+        }
+        let tangent = tangential_velocity / tangential_speed;
+        let tangent_angular = geometry.surface_offset.cross(tangent);
+        let tangent_inverse_mass = properties.inverse_mass
+            + tangent_angular.dot(properties.world_inverse_inertia * tangent_angular);
+        validate_nonnegative(
+            "analytic_contact_tangent_inverse_mass",
+            tangent_inverse_mass,
+        )?;
+        if tangent_inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+        let maximum_friction_impulse = collider.material.friction * normal_impulse;
+        validate_nonnegative(
+            "analytic_contact_maximum_friction_impulse",
+            maximum_friction_impulse,
+        )?;
+        let tangent_impulse =
+            (tangential_speed / tangent_inverse_mass).min(maximum_friction_impulse);
+        validate_nonnegative("analytic_contact_tangent_impulse", tangent_impulse)?;
+        if tangent_impulse == 0.0 {
+            return Ok(());
+        }
+        self.apply_velocity_impulse(geometry.body, tangent, tangent_angular, tangent_impulse)?;
+        let pair_impulse = if cached.key.pair.first() == cached.body_collider {
+            tangent * tangent_impulse
+        } else {
+            -tangent * tangent_impulse
+        };
+        cached.contact.lambdas.tangents = [
+            pair_impulse.dot(cached.contact.tangents[0]),
+            pair_impulse.dot(cached.contact.tangents[1]),
+        ];
+        cached.contact.lambdas.validate()
+    }
+
+    fn apply_mesh_contact_velocity_response(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        contacts: &mut [MeshCachedContact],
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        for cached in contacts {
+            self.failure_hint = Some(StepFailure::for_mesh_contact(
+                StepFailureKind::InvalidSolverState,
+                cached.key,
+            ));
+            self.solve_mesh_contact_velocity(colliders, meshes, cached, dt)?;
+            self.failure_hint = None;
+        }
+        Ok(())
+    }
+
+    fn solve_mesh_contact_velocity(
+        &mut self,
+        colliders: &[CapsuleColliderDesc],
+        meshes: &[DeformingMesh],
+        cached: &mut MeshCachedContact,
+        dt: f32,
+    ) -> Result<(), SolverError> {
+        cached.contact.validate()?;
+        cached.contact.lambdas.tangents = [0.0; 2];
+        let collider = collider_desc_by_id(colliders, cached.body_collider)?;
+        let geometry = self.mesh_contact_geometry(colliders, meshes, cached, dt)?;
+        if geometry.separation > CONTACT_SEPARATION_TOLERANCE {
+            return Ok(());
+        }
+        let body_state = self
+            .body(geometry.body)
+            .ok_or(SolverError::MissingBody(geometry.body.get()))?;
+        let body_velocity =
+            body_state.velocity.linear + body_state.velocity.angular.cross(geometry.surface_offset);
+        let relative_velocity = geometry.surface_velocity - body_velocity;
+        validate_vec3("mesh_contact_relative_surface_velocity", relative_velocity)?;
+        let normal_velocity = relative_velocity.dot(geometry.body_to_mesh);
+        validate_finite("mesh_contact_normal_velocity", normal_velocity)?;
+        if normal_velocity >= 0.0 {
+            return Ok(());
+        }
+
+        let restitution = if cached.contact.age == 1 && cached.was_separated {
+            collider.material.restitution
+        } else {
+            0.0
+        };
+        let target_normal_velocity = -restitution * normal_velocity;
+        validate_nonnegative(
+            "mesh_contact_target_normal_velocity",
+            target_normal_velocity,
+        )?;
+        let properties = self.solve_properties(geometry.body)?;
+        let normal_linear = -geometry.body_to_mesh;
+        let normal_angular = -geometry.surface_offset.cross(geometry.body_to_mesh);
+        let normal_inverse_mass = properties.inverse_mass * normal_linear.length_squared()
+            + normal_angular.dot(properties.world_inverse_inertia * normal_angular);
+        validate_nonnegative("mesh_contact_normal_inverse_mass", normal_inverse_mass)?;
+        if normal_inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+        let normal_impulse =
+            ((target_normal_velocity - normal_velocity) / normal_inverse_mass).max(0.0);
+        validate_nonnegative("mesh_contact_normal_impulse", normal_impulse)?;
+        if normal_impulse == 0.0 {
+            return Ok(());
+        }
+        self.apply_velocity_impulse(geometry.body, normal_linear, normal_angular, normal_impulse)?;
+
+        let body_state = self
+            .body(geometry.body)
+            .ok_or(SolverError::MissingBody(geometry.body.get()))?;
+        let body_velocity =
+            body_state.velocity.linear + body_state.velocity.angular.cross(geometry.surface_offset);
+        let relative_velocity = geometry.surface_velocity - body_velocity;
+        let tangential_velocity = relative_velocity
+            - geometry.body_to_mesh * relative_velocity.dot(geometry.body_to_mesh);
+        validate_vec3("mesh_contact_tangential_velocity", tangential_velocity)?;
+        let tangential_speed = tangential_velocity.length();
+        validate_nonnegative("mesh_contact_tangential_speed", tangential_speed)?;
+        if tangential_speed <= MIN_CONTACT_DENOMINATOR.sqrt() {
+            return Ok(());
+        }
+        let tangent = tangential_velocity / tangential_speed;
+        let tangent_angular = geometry.surface_offset.cross(tangent);
+        let tangent_inverse_mass = properties.inverse_mass
+            + tangent_angular.dot(properties.world_inverse_inertia * tangent_angular);
+        validate_nonnegative("mesh_contact_tangent_inverse_mass", tangent_inverse_mass)?;
+        if tangent_inverse_mass <= MIN_CONTACT_DENOMINATOR {
+            return Ok(());
+        }
+        let maximum_friction_impulse = collider.material.friction * normal_impulse;
+        validate_nonnegative(
+            "mesh_contact_maximum_friction_impulse",
+            maximum_friction_impulse,
+        )?;
+        let tangent_impulse =
+            (tangential_speed / tangent_inverse_mass).min(maximum_friction_impulse);
+        validate_nonnegative("mesh_contact_tangent_impulse", tangent_impulse)?;
+        if tangent_impulse == 0.0 {
+            return Ok(());
+        }
+        self.apply_velocity_impulse(geometry.body, tangent, tangent_angular, tangent_impulse)?;
+        let impulse = tangent * tangent_impulse;
+        cached.contact.lambdas.tangents = [
+            impulse.dot(cached.contact.tangents[0]),
+            impulse.dot(cached.contact.tangents[1]),
+        ];
+        cached.contact.lambdas.validate()
     }
 
     fn solve_contact_velocity(
@@ -1298,6 +2618,104 @@ impl SolverWorld {
             }
             self.failure_hint = None;
         }
+        let proxies = self.analytic_proxies.clone();
+        for collider in &colliders {
+            for proxy in &proxies {
+                if !proxy.collision_enabled {
+                    continue;
+                }
+                let pair = PairKey::ordered(collider.id, proxy.id)?;
+                let contact = ContactKey::new(pair, 0, 0);
+                self.failure_hint = Some(StepFailure::for_contact(
+                    StepFailureKind::InvalidSolverState,
+                    contact,
+                ));
+                let mut stationary_collider = collider.clone();
+                stationary_collider.linear_velocity = Vec3::ZERO;
+                let mut stationary_proxy = *proxy;
+                stationary_proxy.linear_velocity = Vec3::ZERO;
+                if let Some(geometry) = crate::capsule_analytic_contact(
+                    &stationary_collider,
+                    &stationary_proxy,
+                    self.config.fixed_dt,
+                )? {
+                    active = active.checked_add(1).ok_or_else(|| {
+                        SolverError::invalid_value("contact_count", active as f64)
+                    })?;
+                    let penetration = (-geometry.separation).max(0.0);
+                    validate_nonnegative("contact_penetration", penetration)?;
+                    deepest = deepest.max(penetration);
+                }
+                self.failure_hint = None;
+            }
+        }
+        let meshes = core::mem::take(&mut self.meshes);
+        let mesh_result = (|| {
+            for collider in &colliders {
+                let mut stationary_collider = collider.clone();
+                stationary_collider.linear_velocity = Vec3::ZERO;
+                let radius = collider.shape.effective_radius()?;
+                for mesh in &meshes {
+                    let mut raw = Vec::new();
+                    for triangle_id in mesh.query_capsule_sweep(collider, collider)? {
+                        let key_hint = MeshContactKey {
+                            collider: collider.id,
+                            mesh: mesh.id(),
+                            triangle: triangle_id,
+                            feature: 0,
+                        };
+                        self.failure_hint = Some(StepFailure::for_mesh_contact(
+                            StepFailureKind::InvalidSolverState,
+                            key_hint,
+                        ));
+                        let mut triangle =
+                            mesh.moving_triangle(triangle_id, self.config.fixed_dt)?;
+                        if !mesh.body_sees_region(collider.body, triangle.region) {
+                            self.failure_hint = None;
+                            continue;
+                        }
+                        triangle.velocities = [Vec3::ZERO; 3];
+                        let history = self
+                            .cached_mesh_contacts
+                            .iter()
+                            .find(|cached| {
+                                cached.body_collider == collider.id
+                                    && cached.key.mesh == mesh.id()
+                                    && cached.source_triangle == triangle_id
+                            })
+                            .map(|cached| MeshContactHistory {
+                                normal: cached.contact.normal,
+                            });
+                        if let Some(contact) =
+                            capsule_triangle_contact(&stationary_collider, &triangle, history)?
+                        {
+                            raw.push(contact);
+                        }
+                    }
+                    for contact in cluster_mesh_contacts(
+                        raw,
+                        MeshManifoldLimits::try_new(4, radius * 0.25, 0.95)?,
+                    )? {
+                        self.failure_hint = Some(StepFailure::for_mesh_contact(
+                            StepFailureKind::InvalidSolverState,
+                            contact.key,
+                        ));
+                        active = active.checked_add(1).ok_or_else(|| {
+                            SolverError::invalid_value("contact_count", active as f64)
+                        })?;
+                        validate_nonnegative(
+                            "mesh_contact_penetration",
+                            contact.geometry.penetration,
+                        )?;
+                        deepest = deepest.max(contact.geometry.penetration);
+                    }
+                    self.failure_hint = None;
+                }
+            }
+            Ok::<(), SolverError>(())
+        })();
+        self.meshes = meshes;
+        mesh_result?;
         let active = contact_count(active)?;
         validate_finite("deepest_penetration", deepest)?;
         Ok((active, deepest))
@@ -1405,6 +2823,50 @@ fn collider_metadata_unchanged(
     previous.is_some() && previous == current
 }
 
+fn analytic_proxy_metadata_unchanged(
+    previous: &[AnalyticProxy],
+    current: &[AnalyticProxy],
+    id: crate::ColliderId,
+) -> bool {
+    let previous = previous
+        .binary_search_by_key(&id, |proxy| proxy.id)
+        .ok()
+        .map(|index| previous[index]);
+    let current = current
+        .binary_search_by_key(&id, |proxy| proxy.id)
+        .ok()
+        .map(|index| current[index]);
+    matches!(
+        (previous, current),
+        (Some(previous), Some(current))
+            if previous.shape == current.shape
+                && previous.collision_enabled == current.collision_enabled
+    )
+}
+
+fn mesh_metadata_unchanged(
+    previous: &[DeformingMesh],
+    current: &[DeformingMesh],
+    id: MeshId,
+) -> bool {
+    let previous = previous
+        .binary_search_by_key(&id, DeformingMesh::id)
+        .ok()
+        .map(|index| &previous[index]);
+    let current = current
+        .binary_search_by_key(&id, DeformingMesh::id)
+        .ok()
+        .map(|index| &current[index]);
+    matches!(
+        (previous, current),
+        (Some(previous), Some(current))
+            if previous.validation_report().topology_hash
+                == current.validation_report().topology_hash
+                && previous.thickness() == current.thickness()
+                && previous.body_region_ignores() == current.body_region_ignores()
+    )
+}
+
 fn runtime_collider(
     collider: &CapsuleColliderDesc,
     pose: Pose,
@@ -1418,6 +2880,27 @@ fn runtime_collider(
         linear_velocity,
         filter: collider.filter.clone(),
     }
+}
+
+fn cached_contact_from_geometry(
+    collider_a: &CapsuleCollider,
+    collider_b: &CapsuleCollider,
+    geometry: crate::ContactGeometry,
+) -> Result<CachedContact, SolverError> {
+    let radius_a = collider_a.shape.effective_radius()?;
+    let radius_b = collider_b.shape.effective_radius()?;
+    let center_a = geometry.point_a - geometry.normal * radius_a;
+    let center_b = geometry.point_b + geometry.normal * radius_b;
+    let contact = CachedContact {
+        local_a: local_point(collider_a.pose, center_a),
+        local_b: local_point(collider_b.pose, center_b),
+        normal: geometry.normal,
+        tangents: tangent_basis(geometry.normal),
+        lambdas: ContactLambdas::default(),
+        age: 1,
+    };
+    contact.validate()?;
+    Ok(contact)
 }
 
 fn collider_by_id(
@@ -1438,6 +2921,58 @@ fn collider_desc_by_id(
         .binary_search_by_key(&id, |collider| collider.id)
         .map_err(|_| SolverError::invalid_value("contact_collider_id", id.get()))?;
     Ok(&colliders[index])
+}
+
+fn analytic_proxy_by_id(
+    proxies: &[AnalyticProxy],
+    id: crate::ColliderId,
+) -> Result<&AnalyticProxy, SolverError> {
+    let index = proxies
+        .binary_search_by_key(&id, |proxy| proxy.id)
+        .map_err(|_| SolverError::invalid_value("analytic_proxy_id", id.get()))?;
+    Ok(&proxies[index])
+}
+
+fn mesh_by_id(meshes: &[DeformingMesh], id: MeshId) -> Result<&DeformingMesh, SolverError> {
+    let index = meshes
+        .binary_search_by_key(&id, DeformingMesh::id)
+        .map_err(|_| SolverError::invalid_value("mesh_id", id.get()))?;
+    Ok(&meshes[index])
+}
+
+fn analytic_contact_matches(
+    current: &CachedContact,
+    previous: &CachedContact,
+    radius: f32,
+) -> Result<bool, SolverError> {
+    current.validate()?;
+    previous.validate()?;
+    validate_nonnegative("analytic_contact_match_radius", radius)?;
+    let threshold_squared = f64::from(radius).powi(2);
+    let anchor_distance_squared = f64::from((current.local_a - previous.local_a).length_squared())
+        + f64::from((current.local_b - previous.local_b).length_squared());
+    Ok(
+        current.normal.dot(previous.normal) >= CONTACT_MATCH_NORMAL_MIN_DOT
+            && anchor_distance_squared <= threshold_squared,
+    )
+}
+
+fn mesh_contact_matches(
+    current: &CachedContact,
+    previous: &CachedContact,
+    radius: f32,
+) -> Result<bool, SolverError> {
+    current.validate()?;
+    previous.validate()?;
+    validate_nonnegative("mesh_contact_match_radius", radius)?;
+    let body_distance_squared = f64::from((current.local_a - previous.local_a).length_squared());
+    let barycentric_distance_squared =
+        f64::from((current.local_b - previous.local_b).length_squared());
+    Ok(
+        current.normal.dot(previous.normal) >= CONTACT_MATCH_NORMAL_MIN_DOT
+            && body_distance_squared <= f64::from(radius).powi(2)
+            && barycentric_distance_squared <= 0.25_f64.powi(2),
+    )
 }
 
 fn cached_normal_for_pair(contacts: &[(ContactKey, CachedContact)], pair: PairKey) -> Option<Vec3> {
@@ -1753,5 +3288,188 @@ fn step_failure_error(failure: &StepFailure) -> SolverError {
         SolverError::NonFiniteState(body)
     } else {
         SolverError::invalid_value("solver_state", failure.kind as u8)
+    }
+}
+
+fn write_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_f32(bytes: &mut Vec<u8>, value: f32) {
+    bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+}
+
+fn write_vec3(bytes: &mut Vec<u8>, value: Vec3) {
+    write_f32(bytes, value.x);
+    write_f32(bytes, value.y);
+    write_f32(bytes, value.z);
+}
+
+fn canonical_quat(value: Quat) -> Quat {
+    if value.w < 0.0
+        || (value.w == 0.0
+            && (value.x < 0.0
+                || (value.x == 0.0 && (value.y < 0.0 || (value.y == 0.0 && value.z < 0.0)))))
+    {
+        -value
+    } else {
+        value
+    }
+}
+
+fn write_pose(bytes: &mut Vec<u8>, value: Pose) {
+    write_vec3(bytes, value.translation);
+    let rotation = canonical_quat(value.rotation);
+    bytes.extend_from_slice(&rotation.x.to_bits().to_le_bytes());
+    bytes.extend_from_slice(&rotation.y.to_bits().to_le_bytes());
+    bytes.extend_from_slice(&rotation.z.to_bits().to_le_bytes());
+    bytes.extend_from_slice(&rotation.w.to_bits().to_le_bytes());
+}
+
+fn write_debug<T: core::fmt::Debug>(bytes: &mut Vec<u8>, value: &T) {
+    let rendered = format!("{value:?}");
+    write_u32(bytes, rendered.len() as u32);
+    bytes.extend_from_slice(rendered.as_bytes());
+}
+
+fn write_pose_encoder(encoder: &mut Encoder, value: Pose) {
+    write_vec3_encoder(encoder, value.translation);
+    encoder.f32(value.rotation.x);
+    encoder.f32(value.rotation.y);
+    encoder.f32(value.rotation.z);
+    encoder.f32(value.rotation.w);
+}
+
+fn write_vec3_encoder(encoder: &mut Encoder, value: Vec3) {
+    encoder.f32(value.x);
+    encoder.f32(value.y);
+    encoder.f32(value.z);
+}
+
+fn write_u32_encoder(encoder: &mut Encoder, value: u32) {
+    encoder.u32(value);
+}
+
+fn write_contact_encoder(encoder: &mut Encoder, contact: CachedContact) {
+    write_vec3_encoder(encoder, contact.local_a);
+    write_vec3_encoder(encoder, contact.local_b);
+    write_vec3_encoder(encoder, contact.normal);
+    write_vec3_encoder(encoder, contact.tangents[0]);
+    write_vec3_encoder(encoder, contact.tangents[1]);
+    encoder.f32(contact.lambdas.normal);
+    encoder.f32(contact.lambdas.tangents[0]);
+    encoder.f32(contact.lambdas.tangents[1]);
+    encoder.u32(contact.age);
+}
+
+fn write_positions_encoder(encoder: &mut Encoder, positions: &[Vec3]) {
+    encoder.u32(positions.len() as u32);
+    for position in positions {
+        write_vec3_encoder(encoder, *position);
+    }
+}
+
+fn read_vec3(decoder: &mut Decoder<'_>) -> Result<Vec3, SolverError> {
+    Ok(Vec3::new(decoder.f32()?, decoder.f32()?, decoder.f32()?))
+}
+
+fn read_pose(decoder: &mut Decoder<'_>) -> Result<Pose, SolverError> {
+    Pose::try_new(
+        read_vec3(decoder)?,
+        Quat::from_xyzw(
+            decoder.f32()?,
+            decoder.f32()?,
+            decoder.f32()?,
+            decoder.f32()?,
+        ),
+    )
+}
+
+fn read_contact(decoder: &mut Decoder<'_>) -> Result<CachedContact, SolverError> {
+    let contact = CachedContact {
+        local_a: read_vec3(decoder)?,
+        local_b: read_vec3(decoder)?,
+        normal: read_vec3(decoder)?,
+        tangents: [read_vec3(decoder)?, read_vec3(decoder)?],
+        lambdas: ContactLambdas {
+            normal: decoder.f32()?,
+            tangents: [decoder.f32()?, decoder.f32()?],
+        },
+        age: decoder.u32()?,
+    };
+    contact.validate()?;
+    Ok(contact)
+}
+
+fn read_positions(decoder: &mut Decoder<'_>) -> Result<Vec<Vec3>, SolverError> {
+    let count = decoder.count("checkpoint_vertices")?;
+    (0..count).map(|_| read_vec3(decoder)).collect()
+}
+
+fn read_cached_contacts(
+    decoder: &mut Decoder<'_>,
+) -> Result<Vec<(ContactKey, CachedContact)>, SolverError> {
+    let count = decoder.count("checkpoint_contacts")?;
+    let mut contacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let pair = PairKey::ordered(
+            crate::ColliderId::new(decoder.u32()?),
+            crate::ColliderId::new(decoder.u32()?),
+        )?;
+        let key = ContactKey::new(pair, decoder.u32()?, decoder.u32()?);
+        contacts.push((key, read_contact(decoder)?));
+    }
+    contacts.sort_by_key(|(key, _)| *key);
+    Ok(contacts)
+}
+
+fn read_analytic_contacts(
+    decoder: &mut Decoder<'_>,
+) -> Result<Vec<AnalyticCachedContact>, SolverError> {
+    let count = decoder.count("checkpoint_analytic_contacts")?;
+    let mut contacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let pair = PairKey::ordered(
+            crate::ColliderId::new(decoder.u32()?),
+            crate::ColliderId::new(decoder.u32()?),
+        )?;
+        contacts.push(AnalyticCachedContact {
+            key: ContactKey::new(pair, decoder.u32()?, decoder.u32()?),
+            body_collider: crate::ColliderId::new(decoder.u32()?),
+            proxy: crate::ColliderId::new(decoder.u32()?),
+            was_separated: read_bool(decoder, "checkpoint_was_separated")?,
+            contact: read_contact(decoder)?,
+        });
+    }
+    contacts.sort_by_key(|contact| contact.key);
+    Ok(contacts)
+}
+
+fn read_mesh_contacts(decoder: &mut Decoder<'_>) -> Result<Vec<MeshCachedContact>, SolverError> {
+    let count = decoder.count("checkpoint_mesh_contacts")?;
+    let mut contacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        contacts.push(MeshCachedContact {
+            key: crate::MeshContactKey {
+                collider: crate::ColliderId::new(decoder.u32()?),
+                mesh: crate::MeshId::new(decoder.u32()?),
+                triangle: crate::TriangleId::new(decoder.u32()?),
+                feature: decoder.u32()?,
+            },
+            source_triangle: crate::TriangleId::new(decoder.u32()?),
+            body_collider: crate::ColliderId::new(decoder.u32()?),
+            was_separated: read_bool(decoder, "checkpoint_was_separated")?,
+            contact: read_contact(decoder)?,
+        });
+    }
+    contacts.sort_by_key(|contact| contact.key);
+    Ok(contacts)
+}
+
+fn read_bool(decoder: &mut Decoder<'_>, field: &'static str) -> Result<bool, SolverError> {
+    match decoder.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => Err(SolverError::invalid_value(field, value)),
     }
 }

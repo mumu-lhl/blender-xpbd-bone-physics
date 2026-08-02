@@ -1,0 +1,50 @@
+name: Package and release-candidate gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_draft:
+        description: "Request draft RC creation after all platform evidence is present"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run packaging and release-gate contracts
+        run: >-
+          python -m unittest
+          tests.python.test_packaging
+          tests.python.test_release_gate
+          tests.python.test_reference_runner
+      - name: Record manual gate request
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path("artifacts/release-request.json").write_text(json.dumps({
+              "create_draft": os.environ["CREATE_DRAFT"] == "true",
+              "commit": os.environ["GITHUB_SHA"],
+              "release_created": False,
+          }, indent=2) + "\n")
+          PY
+        env:
+          CREATE_DRAFT: ${{ inputs.create_draft }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-contract
+          path: artifacts/release-request.json

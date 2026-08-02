@@ -20,3 +20,6 @@ macro_rules! stable_id {
 stable_id!(BodyId);
 stable_id!(ColliderId);
 stable_id!(ConstraintId);
+stable_id!(MeshId);
+stable_id!(RegionId);
+stable_id!(TriangleId);

@@ -86,4 +86,17 @@ impl FixedClock {
     pub fn reset(&mut self) {
         self.accumulator = 0.0;
     }
+
+    #[must_use]
+    pub fn remainder(&self) -> f64 {
+        self.accumulator
+    }
+
+    pub fn restore_remainder(&mut self, remainder: f64) -> Result<(), SolverError> {
+        if !remainder.is_finite() || remainder < 0.0 || remainder >= self.step_seconds_f64 {
+            return Err(SolverError::invalid_value("clock_remainder", remainder));
+        }
+        self.accumulator = remainder;
+        Ok(())
+    }
 }

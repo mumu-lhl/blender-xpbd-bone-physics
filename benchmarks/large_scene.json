@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "large_scene",
+  "fixed_hz": 120,
+  "bodies": 256,
+  "constraints": 512,
+  "capsule_colliders": 256,
+  "mesh_triangles": 4096,
+  "quality": "authoritative_bake",
+  "required_fields": [
+    "steps",
+    "generated_contacts",
+    "broad_phase_candidates",
+    "ccd_fallbacks",
+    "phase_timings"
+  ]
+}

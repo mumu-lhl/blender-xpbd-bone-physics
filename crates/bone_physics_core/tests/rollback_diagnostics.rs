@@ -1,8 +1,9 @@
 use bone_physics_core::{
     BodyId, BodyInit, BoneBodyDesc, Capsule, CapsuleColliderDesc, ColliderId, CollisionFilter,
-    ConstraintId, ContactKey, ContactMaterial, MAX_MULTIPLIER_MAGNITUDE, PairKey,
-    PersistentConstraint, Pose, QUATERNION_NORMALIZATION_TOLERANCE, QualityPolicy, SolverConfig,
-    SolverError, SolverWorld, StepFailureKind, StepOptions, Velocity,
+    ConstraintId, ContactKey, ContactMaterial, DeformingMesh, MAX_MULTIPLIER_MAGNITUDE,
+    MeshContactKey, MeshId, MeshTopology, PairKey, PersistentConstraint, Pose,
+    QUATERNION_NORMALIZATION_TOLERANCE, QualityPolicy, RegionId, SolverConfig, SolverError,
+    SolverWorld, StepFailureKind, StepOptions, TriangleId, Velocity,
 };
 use glam::{Quat, Vec3};
 
@@ -145,6 +146,55 @@ fn prediction_overflow_rolls_back_every_observable_dynamic_value_and_names_body(
     assert_eq!(failure.body, Some(BodyId::new(2)));
     assert_eq!(failure.constraint, None);
     assert_eq!(failure.contact, None);
+}
+
+#[test]
+fn overflowing_mesh_surface_velocity_rolls_back_and_names_stable_mesh_contact() {
+    let mut world = world(vec![body(1, Vec3::new(2.0, 0.2, 0.0), Vec3::ZERO, 1.0)]);
+    world.set_colliders(vec![sphere(10, 1, 0.25)]).unwrap();
+    let base = [
+        Vec3::new(-1.0, 0.0, -1.0),
+        Vec3::new(1.0, 0.0, -1.0),
+        Vec3::new(0.0, 0.0, 1.0),
+    ];
+    let previous = base.to_vec();
+    let current = base.map(|point| point + Vec3::X * 4.0).to_vec();
+    world
+        .set_meshes(vec![
+            DeformingMesh::rebuild(
+                MeshId::new(30),
+                MeshTopology {
+                    vertex_count: 3,
+                    triangles: vec![[0, 2, 1]],
+                    triangle_regions: vec![RegionId::new(7)],
+                    closed_hint: false,
+                },
+                previous,
+                current,
+                0.0,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+    let before = body_bits(&world, BodyId::new(1));
+
+    let diagnostics = world.substep(SAFE_DT, 1.0, options(4)).unwrap();
+
+    assert!(diagnostics.rolled_back);
+    assert!(world.is_paused());
+    assert_eq!(body_bits(&world, BodyId::new(1)), before);
+    let failure = world.last_failure().unwrap();
+    assert_eq!(failure.kind, StepFailureKind::InvalidSolverState);
+    assert_eq!(
+        failure.mesh_contact,
+        Some(MeshContactKey {
+            collider: ColliderId::new(10),
+            mesh: MeshId::new(30),
+            triangle: TriangleId::new(0),
+            feature: 0,
+        })
+    );
+    assert!(failure.source.is_some());
 }
 
 #[test]

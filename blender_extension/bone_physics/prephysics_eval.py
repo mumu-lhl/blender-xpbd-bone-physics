@@ -1,0 +1,213 @@
+"""Capture ordinary animation and collision inputs before physics output."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+from typing import Protocol
+
+from .mesh_builder import CollisionMeshBatch, MeshSource, build_collision_surface
+from .model import AnalyticColliderSpec, BoneSpec, CollisionSurfaceSpec, WorldSpec
+from .scene_adapter import Pose
+
+
+@dataclass(frozen=True, slots=True)
+class TargetPose:
+    body_id: int
+    previous: Pose
+    current: Pose
+
+
+@dataclass(frozen=True, slots=True)
+class ColliderPose:
+    collider_id: int
+    previous: Pose
+    current: Pose
+
+
+@dataclass(frozen=True, slots=True)
+class PrePhysicsSnapshot:
+    time: float
+    target_poses: tuple[TargetPose, ...]
+    collider_poses: tuple[ColliderPose, ...]
+    object_to_simulation: tuple[float, ...]
+    mesh_batches: tuple[CollisionMeshBatch, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.time):
+            raise ValueError("pre-physics time must be finite")
+        if len(self.object_to_simulation) != 16 or not all(
+            math.isfinite(value) for value in self.object_to_simulation
+        ):
+            raise ValueError("object_to_simulation must be one finite 4x4 matrix")
+
+
+class CaptureAdapter(Protocol):
+    def set_scene_time(self, scene, seconds: float) -> None: ...
+
+    def restore_animation_references(self, scene, references: dict[int, Pose]) -> None: ...
+
+    def evaluate_prephysics(self, scene, depsgraph) -> None: ...
+
+    def scene_time(self, scene) -> float: ...
+
+    def object_to_simulation(
+        self,
+        scene,
+        depsgraph,
+        world_spec: WorldSpec,
+    ) -> tuple[float, ...]: ...
+
+    def target_pose(self, scene, depsgraph, bone: BoneSpec) -> Pose: ...
+
+    def collider_pose(
+        self,
+        scene,
+        depsgraph,
+        collider: AnalyticColliderSpec,
+    ) -> Pose: ...
+
+    def collision_mesh_source(
+        self,
+        scene,
+        depsgraph,
+        surface: CollisionSurfaceSpec,
+        object_to_simulation: tuple[float, ...],
+    ) -> MeshSource: ...
+
+
+class PrePhysicsEvaluator:
+    def __init__(self, adapter: CaptureAdapter) -> None:
+        self.adapter = adapter
+        self._last_targets: dict[int, Pose] = {}
+        self._last_colliders: dict[int, Pose] = {}
+        self._last_mesh_sources: dict[int, MeshSource] = {}
+        self._mesh_templates: dict[int, CollisionMeshBatch] = {}
+
+    def capture(self, scene, depsgraph, world_spec: WorldSpec) -> PrePhysicsSnapshot:
+        body_ids = {bone.id for bone in world_spec.bones}
+        references = {
+            body_id: pose
+            for body_id, pose in self._last_targets.items()
+            if body_id in body_ids
+        }
+        if references:
+            self.adapter.restore_animation_references(scene, references)
+        self.adapter.evaluate_prephysics(scene, depsgraph)
+        object_to_simulation = tuple(
+            self.adapter.object_to_simulation(scene, depsgraph, world_spec)
+        )
+
+        targets = []
+        next_targets = {}
+        for bone in sorted(world_spec.bones, key=lambda item: item.id):
+            current = self.adapter.target_pose(scene, depsgraph, bone)
+            previous = self._last_targets.get(bone.id, current)
+            targets.append(TargetPose(bone.id, previous, current))
+            next_targets[bone.id] = current
+
+        colliders = []
+        next_colliders = {}
+        for collider in sorted(
+            world_spec.analytic_colliders,
+            key=lambda item: item.id,
+        ):
+            current = self.adapter.collider_pose(scene, depsgraph, collider)
+            previous = self._last_colliders.get(collider.id, current)
+            colliders.append(ColliderPose(collider.id, previous, current))
+            next_colliders[collider.id] = current
+
+        mesh_batches = []
+        next_mesh_sources = {}
+        for surface in sorted(world_spec.collision_surfaces, key=lambda item: item.id):
+            current = self.adapter.collision_mesh_source(
+                scene,
+                depsgraph,
+                surface,
+                object_to_simulation,
+            )
+            previous = self._last_mesh_sources.get(surface.id, current)
+            batch = build_collision_surface(
+                current,
+                surface,
+                previous=previous,
+                template=self._mesh_templates.get(surface.id),
+            )
+            mesh_batches.append(batch)
+            self._mesh_templates.setdefault(surface.id, batch)
+            next_mesh_sources[surface.id] = current
+
+        snapshot = PrePhysicsSnapshot(
+            time=float(self.adapter.scene_time(scene)),
+            target_poses=tuple(targets),
+            collider_poses=tuple(colliders),
+            object_to_simulation=object_to_simulation,
+            mesh_batches=tuple(mesh_batches),
+        )
+        self._last_targets = next_targets
+        self._last_colliders = next_colliders
+        self._last_mesh_sources = next_mesh_sources
+        return snapshot
+
+    def capture_at(
+        self,
+        scene,
+        depsgraph,
+        world_spec: WorldSpec,
+        sample_time: float,
+    ) -> PrePhysicsSnapshot:
+        if not math.isfinite(sample_time):
+            raise ValueError("pre-physics sample time must be finite")
+        self.adapter.set_scene_time(scene, sample_time)
+        return self.capture(scene, depsgraph, world_spec)
+
+    def restore_time(
+        self,
+        scene,
+        depsgraph,
+        world_spec: WorldSpec,
+        time: float,
+    ) -> None:
+        if not math.isfinite(time):
+            raise ValueError("pre-physics restore time must be finite")
+        if self._last_targets:
+            self.adapter.restore_animation_references(scene, self._last_targets)
+        self.adapter.set_scene_time(scene, time)
+        self.adapter.evaluate_prephysics(scene, depsgraph)
+        self.adapter.object_to_simulation(scene, depsgraph, world_spec)
+
+    def save_state(
+        self,
+    ) -> tuple[
+        dict[int, Pose],
+        dict[int, Pose],
+        dict[int, MeshSource],
+        dict[int, CollisionMeshBatch],
+    ]:
+        return (
+            dict(self._last_targets),
+            dict(self._last_colliders),
+            dict(self._last_mesh_sources),
+            dict(self._mesh_templates),
+        )
+
+    def restore_state(
+        self,
+        state: tuple[
+            dict[int, Pose],
+            dict[int, Pose],
+            dict[int, MeshSource],
+            dict[int, CollisionMeshBatch],
+        ],
+    ) -> None:
+        targets, colliders, meshes, templates = state
+        self._last_targets = dict(targets)
+        self._last_colliders = dict(colliders)
+        self._last_mesh_sources = dict(meshes)
+        self._mesh_templates = dict(templates)
+
+    def reset(self) -> None:
+        self._last_targets.clear()
+        self._last_colliders.clear()
+        self._last_mesh_sources.clear()
+        self._mesh_templates.clear()
