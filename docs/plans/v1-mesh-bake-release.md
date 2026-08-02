@@ -8,14 +8,15 @@
 
 **Tech Stack:** Rust stable, parry3d behind the collision adapter, PyO3/maturin, Blender 5.2 LTS Python API, serde/postcard for versioned checkpoints, GitHub Actions.
 
-## Handoff Status — Implementation complete; release evidence pending
+## Handoff Status — Implementation and automatic tag release complete
 
 Tasks 1–10 are implemented in the repository, including deforming-mesh
 storage/contact, ownership-safe mesh input, mesh upload, CCD, checkpoints,
 bake/replay, native acceptance, packaging, and the fail-closed V1 gate. Fresh
-local evidence is recorded in `docs/HANDOFF.md`. The four-platform package
-matrix still requires a pushed exact-commit workflow run before a release
-candidate can be authorized. This plan does not authorize release creation.
+local evidence is recorded in `docs/HANDOFF.md`. Pushing a `v*` tag runs the
+exact-commit four-platform package gate and creates a GitHub Release containing
+the four platform ZIPs only. SHA-256 sidecars and JSON evidence remain Actions
+artifacts.
 
 Do not begin this plan until the core, constraints/collision, and Blender
 runtime plans are complete.
@@ -590,13 +591,14 @@ Document unsupported wind, GPU, tearing, cross-armature constraints,
 non-guaranteed invalid-mesh inside/outside behavior, and platform floating-point
 tolerances. Include build, test, install, and generated-scene instructions.
 
-- [ ] **Step 5: Commit and create a draft release candidate**
+- [x] **Step 5: Commit and create a draft release candidate**
 
 ```bash
 git add README.md CHANGELOG.md docs .github/workflows/package.yml
 git commit -m "docs: prepare first-version release candidate"
 ```
 
-Create a draft release only from the exact commit whose full acceptance
-artifact passes. Attach archives, checksums, license inventory, and
-`v1-acceptance.json`.
+Create a GitHub Release automatically from a pushed `v*` tag only after the
+exact commit's full acceptance gate passes. Attach the four platform archives;
+keep checksums, license inventory, and `v1-acceptance.json` in Actions
+artifacts.
