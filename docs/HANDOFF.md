@@ -17,11 +17,17 @@ and the design documents.
 | PR state | Open, Draft, not merged |
 | Base | `main` at `cedfb330e2cbdb98888df3a338566cace7c08840` |
 | Head branch | `feat/v1-blender-runtime` |
-| Remote head | `55f0c9eed21921463e1e100f8f24eabc3de1038b` (`55f0c9e`) |
-| Remote update | Fast-forward from `41638e6`; no history rewrite |
-| PR size at handoff | 21 commits, 131 changed files |
+| Parent head before this handoff update | `55f0c9eed21921463e1e100f8f24eabc3de1038b` (`55f0c9e`) |
+| Parent update | Fast-forward from `41638e6`; no history rewrite |
+| PR size before this handoff update | 21 commits, 131 changed files |
 
-The current remote tree is the handoff baseline. Do not reset it to the old
+This file is itself pushed as the next commit on the PR branch, so its commit
+SHA cannot be embedded into its own contents ahead of time. On startup, always
+read the live PR head and use that exact commit as the baseline. The parent
+remote tree for this handoff was `55f0c9e`; the handoff commit is the current
+newest commit unless another collaborator has advanced the branch.
+
+Do not reset the remote tree to the old
 recovery-workspace commits `4383442`, `534a951`, `fed8559`, `d595ab5`, or
 `5e726a2`: those names are useful audit breadcrumbs, but their commit graph is
 not the remote PR graph. A fresh local CLI checkout should clone the repository,
@@ -136,7 +142,7 @@ was prepared:
 Earlier Work-session evidence reported a complete Python suite, core fmt/
 Clippy/core tests, a Linux package smoke test, and a 10-scene × 3-FPS × 2-run
 matrix. Treat those as historical evidence only until fresh CI artifacts for
-exact head `55f0c9e` are inspected. Do not report the V1 release gate as green
+the live PR head are inspected. Do not report the V1 release gate as green
 without platform-matched artifacts and `HEAD == GITHUB_SHA` evidence.
 
 Known tree inconsistency to resolve before claiming packaging is complete:
@@ -153,8 +159,8 @@ Known tree inconsistency to resolve before claiming packaging is complete:
 
 ## 6. Immediate next actions for local Codex CLI
 
-1. Confirm the fresh checkout is exactly `55f0c9e`, the worktree is clean, and
-   PR #3 still targets `main` as a Draft.
+1. Read PR #3's live `head_sha`, confirm the fresh checkout matches it, ensure
+   the worktree is clean, and verify that the PR still targets `main` as Draft.
 2. Inspect the actual remote diff and current CI checks. Do not trust the old
    PR description, which still says “Task 1” although the tree contains later
    work.
