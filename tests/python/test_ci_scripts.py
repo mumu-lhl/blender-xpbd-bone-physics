@@ -22,6 +22,7 @@ from scripts.ci.run_blender_tests import (
 )
 from scripts.ci.inspect_native_wheel import unexpected_dependencies
 from scripts.ci.run_python_tests import command_report, unittest_arguments
+from scripts.ci.run_package_load import find_native_member, platform_system
 
 
 class BlenderInstallerTests(unittest.TestCase):
@@ -67,6 +68,14 @@ class BlenderRunnerTests(unittest.TestCase):
                 "test_runtime_handler.py",
             ),
         )
+
+    def test_installed_extension_smoke_advances_a_native_world(self) -> None:
+        smoke = Path("tests/blender/test_installed_extension.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("build_world", smoke)
+        self.assertIn("advance", smoke)
+        self.assertIn("read_transforms", smoke)
 
     def test_extension_bundle_contains_manifest_package_and_native(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -115,6 +124,31 @@ class BlenderRunnerTests(unittest.TestCase):
 
 
 class CommandReportTests(unittest.TestCase):
+    def test_package_load_maps_supported_platforms_and_native_suffixes(self) -> None:
+        self.assertEqual(platform_system("linux-x86_64"), "linux")
+        self.assertEqual(platform_system("windows-x86_64"), "windows")
+        self.assertEqual(platform_system("macos-arm64"), "darwin")
+
+    def test_package_load_selects_exact_native_member(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "native.whl"
+            with ZipFile(wheel, "w") as output:
+                output.writestr("bone_physics_native.abi3.pyd", b"native")
+
+            self.assertEqual(
+                find_native_member(wheel, "windows-x86_64"),
+                "bone_physics_native.abi3.pyd",
+            )
+
+    def test_package_load_rejects_missing_platform_native_member(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "native.whl"
+            with ZipFile(wheel, "w") as output:
+                output.writestr("bone_physics_native.abi3.so", b"native")
+
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                find_native_member(wheel, "windows-x86_64")
+
     def test_rust_ci_does_not_call_removed_reference_report_script(self) -> None:
         capture = Path("scripts/ci/capture.sh").read_text(encoding="utf-8")
         self.assertNotIn("reference_report.py", capture)
@@ -128,6 +162,19 @@ class CommandReportTests(unittest.TestCase):
             "  blender-runtime:", 1
         )[0]
         self.assertIn("components: rustfmt, clippy", native_job)
+
+    def test_package_workflow_has_the_four_supported_platforms_and_evidence_uploads(self) -> None:
+        workflow = Path(".github/workflows/package.yml").read_text(encoding="utf-8")
+        for platform in (
+            "linux-x86_64",
+            "windows-x86_64",
+            "macos-arm64",
+            "macos-x86_64",
+        ):
+            self.assertIn(platform, workflow)
+        self.assertIn("package-and-load", workflow)
+        self.assertIn("if: always()", workflow)
+        self.assertIn("package-load-report.json", workflow)
 
     def test_discovery_arguments_are_compatible_with_python_311(self) -> None:
         self.assertEqual(

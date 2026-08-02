@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       create_draft:
-        description: "Request draft RC creation after all platform evidence is present"
+        description: "Request draft RC eligibility after all evidence is present"
         required: true
         default: false
         type: boolean
@@ -17,34 +17,123 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  package-and-load:
+    name: package-and-load (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            blender: true
+          - platform: windows-x86_64
+            os: windows-latest
+            blender: false
+          - platform: macos-arm64
+            os: macos-14
+            blender: false
+          - platform: macos-x86_64
+            os: macos-13
+            blender: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - name: Install maturin
+        run: python -m pip install maturin==1.14.1
+      - name: Add dumpbin to PATH on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dumpbin = & "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -find **/dumpbin.exe | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe was not found" }
+          Split-Path $dumpbin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Prepare report directory
+        run: python -c "from pathlib import Path; Path('artifacts/${{ matrix.platform }}').mkdir(parents=True, exist_ok=True)"
+      - name: Install pinned Blender 5.2 on Linux
+        if: matrix.blender
+        run: >-
+          python scripts/ci/install_blender.py
+          --destination blender-runtime
+          --report artifacts/${{ matrix.platform }}/blender-install.json
+      - name: Run package and load harness
+        shell: bash
+        run: |
+          blender_args=()
+          if [[ "${{ matrix.blender }}" == "true" ]]; then
+            blender_args+=(--blender "$(find blender-runtime -type f -name blender -print -quit)")
+          fi
+          python scripts/ci/run_package_load.py \
+            --platform "${{ matrix.platform }}" \
+            --report-dir "artifacts/${{ matrix.platform }}" \
+            "${blender_args[@]}"
+      - name: Upload package evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.platform }}
+          path: artifacts/${{ matrix.platform }}/
+          if-no-files-found: error
+
   contract:
+    needs: package-and-load
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run packaging and release-gate contracts
-        run: >-
-          python -m unittest
-          tests.python.test_packaging
-          tests.python.test_release_gate
-          tests.python.test_reference_runner
-      - name: Record manual gate request
-        run: |
-          mkdir -p artifacts
-          python - <<'PY'
-          import json, os
-          from pathlib import Path
-          Path("artifacts/release-request.json").write_text(json.dumps({
-              "create_draft": os.environ["CREATE_DRAFT"] == "true",
-              "commit": os.environ["GITHUB_SHA"],
-              "release_created": False,
-          }, indent=2) + "\n")
-          PY
+      - name: Download platform evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: artifacts/platforms
+          merge-multiple: false
+      - name: Validate evidence manifest
         env:
           CREATE_DRAFT: ${{ inputs.create_draft }}
-      - uses: actions/upload-artifact@v4
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          expected = {
+              "linux-x86_64",
+              "windows-x86_64",
+              "macos-arm64",
+              "macos-x86_64",
+          }
+          found = set()
+          failures = []
+          for directory in Path("artifacts/platforms").glob("package-*"):
+              report = directory / "package-load-report.json"
+              if not report.is_file():
+                  failures.append(f"missing report: {report}")
+                  continue
+              data = json.loads(report.read_text())
+              found.add(data.get("platform"))
+              if data.get("status") != "ok":
+                  failures.append(f"failed platform: {data.get('platform')}")
+          if found != expected:
+              failures.append(f"platform set mismatch: {sorted(found)}")
+          result = {"commit": os.environ["GITHUB_SHA"], "platforms": sorted(found), "failures": failures}
+          Path("artifacts").mkdir(exist_ok=True)
+          Path("artifacts/platform-evidence.json").write_text(json.dumps(result, indent=2) + "\n")
+          if failures:
+              raise SystemExit("; ".join(failures))
+          PY
+      - name: Upload contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: package-contract
-          path: artifacts/release-request.json
+          path: artifacts/platform-evidence.json
+          if-no-files-found: error
