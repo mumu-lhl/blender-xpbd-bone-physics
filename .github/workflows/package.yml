@@ -171,7 +171,7 @@ jobs:
         run: |
           draft_flag=()
           if [[ "${{ inputs.create_draft }}" == "true" ]]; then draft_flag=(--create-draft); fi
-          python scripts/ci/build_v1_acceptance.py \
+          python -m scripts.ci.build_v1_acceptance \
             --commit "${GITHUB_SHA}" \
             --github-sha "${GITHUB_SHA}" \
             --reference artifacts/platforms/package-linux-x86_64/reference.json \
