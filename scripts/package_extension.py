@@ -44,6 +44,13 @@ def package(source: Path, output: Path, *, native: Path | None = None, platform:
         "files": sorted(files),
         "native_count": sum(name.startswith("native/") for name in files),
         "license": "GPL-3.0-or-later",
+        "licenses": [
+            {
+                "component": "bone_physics",
+                "spdx": "GPL-3.0-or-later",
+                "source": "blender_manifest.toml",
+            }
+        ],
     }
     output.with_suffix(output.suffix + ".json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report

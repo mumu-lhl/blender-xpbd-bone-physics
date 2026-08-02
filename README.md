@@ -9,8 +9,9 @@ for UMA, PMX/Bullet, or existing Blender jiggle-bone add-ons.
 
 ## Status
 
-Design specification approved; implementation plans complete; first-version
-development in progress.
+Design specification approved; V1 implementation is complete on the
+`feat/v1-complete` branch. Release publication remains a separate manual
+authorization step.
 
 Read the approved architecture:
 
@@ -37,6 +38,23 @@ Read the approved architecture:
 The first version focuses on foundational bone motion, constraints, collision,
 cache, and bake. Wind, GPU solving, tearing, and full interaction design are
 outside the initial scope.
+
+## Verification
+
+Run the complete local gate with the pinned toolchain and `uv` environment:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+python -m unittest discover tests/python -v
+python tests/blender/run_reference.py \
+  --acceptance tests/reference/acceptance.json \
+  --output artifacts/reference.json --backend native
+```
+
+Package/load evidence is produced by `scripts/ci/run_package_load.py` and the
+four-platform manual workflow. No GitHub Release is created automatically.
 
 ## License
 

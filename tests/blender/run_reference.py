@@ -104,6 +104,7 @@ def run_matrix(
     *,
     seed: int,
     backend: str = "fixture",
+    commit: str | None = None,
 ) -> dict[str, Any]:
     thresholds = acceptance["thresholds"]
     runs: list[dict[str, Any]] = []
@@ -131,6 +132,7 @@ def run_matrix(
     return {
         "schema_version": 1,
         "backend": backend,
+        **({"commit": commit} if commit is not None else {}),
         "seed": seed,
         "fixed_hz": FIXED_HZ,
         "authoritative_iterations": AUTHORITATIVE_ITERATIONS,
@@ -265,9 +267,10 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20260801)
     parser.add_argument("--backend", choices=("native", "fixture"), default="native")
+    parser.add_argument("--commit")
     args = parser.parse_args()
     acceptance = load_acceptance(args.acceptance)
-    report = run_matrix(acceptance, seed=args.seed, backend=args.backend)
+    report = run_matrix(acceptance, seed=args.seed, backend=args.backend, commit=args.commit)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 1 if report["failures"] else 0

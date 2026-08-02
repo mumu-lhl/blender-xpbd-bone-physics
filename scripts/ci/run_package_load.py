@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -57,7 +58,13 @@ def find_native_member(wheel: Path, platform_tag: str) -> str:
     return candidates[0]
 
 
-def _run(command: list[str], *, cwd: Path, output: Path) -> dict[str, object]:
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    output: Path,
+    environment: dict[str, str] | None = None,
+) -> dict[str, object]:
     completed = subprocess.run(
         command,
         cwd=cwd,
@@ -65,6 +72,7 @@ def _run(command: list[str], *, cwd: Path, output: Path) -> dict[str, object]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
+        env=environment,
     )
     output.write_text(completed.stdout, encoding="utf-8")
     return {
@@ -96,12 +104,16 @@ def run_package_load(
     report_directory: Path,
     *,
     blender: Path | None = None,
+    commit: str | None = None,
+    reference_output: Path | None = None,
 ) -> int:
     root = root.resolve()
     report_directory.mkdir(parents=True, exist_ok=True)
     (report_directory / "failure-snapshot.json").unlink(missing_ok=True)
     status = 0
     reports: dict[str, object] = {"platform": platform_tag}
+    if commit is not None:
+        reports["commit"] = commit
     try:
         platform_system(platform_tag)
         maturin = shutil.which("maturin")
@@ -144,6 +156,16 @@ def run_package_load(
                 platform=platform_tag,
             )
             reports["package"] = package_report
+            (report_directory / "package.json").write_text(
+                json.dumps(package_report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            (report_directory / "package.sha256").write_text(
+                (archive_path.with_suffix(archive_path.suffix + ".sha256")).read_text(
+                    encoding="utf-8"
+                ),
+                encoding="utf-8",
+            )
             reports["verification"] = verify(
                 archive_path,
                 expected_platform=platform_tag,
@@ -168,8 +190,47 @@ def run_package_load(
                 output=report_directory / "load-test.log",
             )
             reports["load_test"] = smoke
+            (report_directory / "load-test.json").write_text(
+                json.dumps(smoke, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             if smoke["exit_code"] != 0:
                 raise RuntimeError("packaged Python load test failed")
+            if reference_output is not None:
+                reference_environment = temporary / "reference-env"
+                reference_environment.mkdir()
+                with ZipFile(wheel) as archive:
+                    archive.extractall(reference_environment)
+                install = {
+                    "status": "ok",
+                    "exit_code": 0,
+                    "method": "wheel-extract",
+                    "wheel": wheel.name,
+                }
+                reports["reference_install"] = install
+                environment = dict(os.environ)
+                environment["PYTHONPATH"] = os.pathsep.join(
+                    (str(reference_environment), str(root), environment.get("PYTHONPATH", ""))
+                )
+                reference = _run(
+                    [
+                        sys.executable,
+                        str(root / "tests/blender/run_reference.py"),
+                        "--acceptance",
+                        str(root / "tests/reference/acceptance.json"),
+                        "--output",
+                        str(reference_output),
+                        "--backend",
+                        "native",
+                        *( ["--commit", commit] if commit else [] ),
+                    ],
+                    cwd=root,
+                    output=report_directory / "reference.log",
+                    environment=environment,
+                )
+                reports["reference"] = reference
+                if reference["exit_code"] != 0:
+                    raise RuntimeError("native reference acceptance failed")
             if blender is not None:
                 from scripts.ci.run_blender_tests import run_blender_tests
 
@@ -206,12 +267,16 @@ def main() -> int:
     parser.add_argument("--platform", required=True)
     parser.add_argument("--report-dir", type=Path, required=True)
     parser.add_argument("--blender", type=Path)
+    parser.add_argument("--commit")
+    parser.add_argument("--reference-output", type=Path)
     arguments = parser.parse_args()
     return run_package_load(
         arguments.root,
         arguments.platform,
         arguments.report_dir,
         blender=arguments.blender,
+        commit=arguments.commit,
+        reference_output=arguments.reference_output,
     )
 
 

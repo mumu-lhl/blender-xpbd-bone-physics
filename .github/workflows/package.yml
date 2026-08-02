@@ -73,6 +73,8 @@ jobs:
           python scripts/ci/run_package_load.py \
             --platform "${{ matrix.platform }}" \
             --report-dir "artifacts/${{ matrix.platform }}" \
+            --commit "${GITHUB_SHA}" \
+            $([[ "${{ matrix.blender }}" == "true" ]] && echo "--reference-output artifacts/${{ matrix.platform }}/reference.json") \
             "${blender_args[@]}"
       - name: Upload package evidence
         if: always()
