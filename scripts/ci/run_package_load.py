@@ -117,15 +117,14 @@ def run_package_load(
     try:
         platform_system(platform_tag)
         maturin = shutil.which("maturin")
-        if maturin is None:
-            raise RuntimeError("maturin executable is unavailable")
+        maturin_command = [maturin] if maturin is not None else [sys.executable, "-m", "maturin"]
         with tempfile.TemporaryDirectory(prefix="bone-physics-package-") as directory:
             temporary = Path(directory)
             wheel_directory = temporary / "wheel"
             wheel_directory.mkdir()
             build = _run(
                 [
-                    maturin,
+                    *maturin_command,
                     "build",
                     "--release",
                     "--manifest-path",

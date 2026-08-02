@@ -50,7 +50,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $dumpbin = & "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe" `
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere `
             -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
             -find **/dumpbin.exe | Select-Object -First 1
           if (-not $dumpbin) { throw "dumpbin.exe was not found" }
