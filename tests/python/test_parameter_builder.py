@@ -8,8 +8,11 @@ except ModuleNotFoundError:
 from blender_extension.bone_physics.model import (
     BoneSpec,
     ChainSpec,
+    ChainField,
+    ChainFieldCurve,
     CurvePoint,
     CrossLinkSpec,
+    AngularLimitMode,
     ParameterCurve,
     WorldSpec,
 )
@@ -31,7 +34,77 @@ def bone(body_id, x, length):
     )
 
 
+def body_value(compiled, body_id, column):
+    ids = compiled.bodies["body_ids"]
+    values = compiled.bodies["values"]
+    return values[ids.index(body_id) * 46 + column]
+
+
+def full_field_world():
+    curve = ParameterCurve((CurvePoint(0.0, 0.0), CurvePoint(1.0, 1.0)))
+    root = bone(1, 0.0, 1.0)
+    child = BoneSpec(
+        id=2,
+        name="child",
+        parent_id=1,
+        joint_constraint_id=20,
+        rest_translation=(0.0, 1.0, 0.0),
+        local_head=(0.0, 0.0, 0.0),
+        local_tail=(0.0, 1.0, 0.0),
+    )
+    return WorldSpec(
+        bones=(root, child),
+        chains=(
+            ChainSpec(
+                id="full",
+                body_ids=(1, 2),
+                field_curves=(
+                    ChainFieldCurve(ChainField.GRAVITY_SCALE, curve),
+                    ChainFieldCurve(ChainField.JOINT_COMPLIANCE, curve),
+                ),
+            ),
+        ),
+    )
+
+
+def attachment_and_swing_world():
+    root = bone(1, 0.0, 1.0)
+    child = BoneSpec(
+        id=2,
+        name="child",
+        parent_id=1,
+        angular_constraint_id=22,
+        rest_translation=(0.0, 1.0, 0.0),
+        local_head=(0.0, 0.0, 0.0),
+        local_tail=(0.0, 1.0, 0.0),
+        angular_limit_mode=AngularLimitMode.SWING_TWIST,
+        swing_axis=(0.0, 1.0, 0.0),
+        max_swing=0.6,
+        min_twist=-0.4,
+        max_twist=0.4,
+    )
+    return WorldSpec(
+        bones=(root, child),
+        chains=(ChainSpec(id="attached", body_ids=(1, 2), attachment_constraint_id=21),),
+    )
+
+
 class ParameterBuilderTests(unittest.TestCase):
+    def test_general_fields_sample_bodies_and_joint_boundaries(self):
+        compiled = compile_world_spec(full_field_world())
+
+        self.assertAlmostEqual(body_value(compiled, 1, 20), 0.25)
+        self.assertAlmostEqual(body_value(compiled, 2, 20), 0.75)
+        self.assertAlmostEqual(compiled.constraint_row(20)[8], 0.5)
+
+    def test_root_attachment_and_swing_twist_use_existing_batch_kinds(self):
+        compiled = compile_world_spec(attachment_and_swing_world())
+
+        self.assertEqual(tuple(compiled.constraints["kinds"]), (3, 6))
+        self.assertEqual(compiled.constraint_row(22)[14:17], (0.0, 1.0, 0.0))
+        self.assertAlmostEqual(compiled.constraint_row(22)[17], 0.6)
+        self.assertAlmostEqual(compiled.constraint_row(22)[18], -0.4)
+        self.assertAlmostEqual(compiled.constraint_row(22)[19], 0.4)
     def test_chain_coordinates_use_accumulated_rest_length(self):
         bones = {
             item.id: item

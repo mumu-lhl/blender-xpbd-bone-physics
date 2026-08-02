@@ -53,6 +53,12 @@ compliance and damping at `8..10`, rest quaternion at `10..14`, and angular
 limit data at `14..21`. XYZ Euler order is encoded as an integer-valued float
 from `0` (`XYZ`) through `5` (`ZYX`).
 
+Authoring compiles root attachments as kind `3` with `body_b = 0`; the two
+anchor vectors are the physical root and its animation-target local anchors.
+Swing-twist rows use kind `6`: axis at `14..17`, maximum swing at `17`, and
+minimum/maximum twist at `18..20`. These encodings retain the v1 24-column
+constraint layout and API version.
+
 `filters` contains `layers: u32[N]`, `masks: u32[N]`, and two compressed
 offset/value pairs:
 

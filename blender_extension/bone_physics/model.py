@@ -21,6 +21,48 @@ class CurveInterpolation(IntEnum):
     CUBIC_HERMITE = 2
 
 
+class AngularLimitMode(IntEnum):
+    FREE = 0
+    XYZ = 1
+    SWING_TWIST = 2
+
+
+class ChainField(IntEnum):
+    INVERSE_MASS = 0
+    INERTIA_SCALE_X = 1
+    INERTIA_SCALE_Y = 2
+    INERTIA_SCALE_Z = 3
+    GRAVITY_SCALE = 4
+    TRANSLATION_INERTIA = 5
+    ROTATION_INERTIA = 6
+    LINEAR_DAMPING = 7
+    ANGULAR_DAMPING = 8
+    JOINT_COMPLIANCE = 9
+    JOINT_DAMPING = 10
+    ANGULAR_COMPLIANCE = 11
+    ANGULAR_CONSTRAINT_DAMPING = 12
+    RECOVERY_COMPLIANCE = 13
+    RECOVERY_DAMPING = 14
+    RADIUS = 15
+    MARGIN = 16
+    FRICTION = 17
+    RESTITUTION = 18
+    XYZ_LOWER_X = 19
+    XYZ_LOWER_Y = 20
+    XYZ_LOWER_Z = 21
+    XYZ_UPPER_X = 22
+    XYZ_UPPER_Y = 23
+    XYZ_UPPER_Z = 24
+    SWING_AXIS_X = 25
+    SWING_AXIS_Y = 26
+    SWING_AXIS_Z = 27
+    MAX_SWING = 28
+    MIN_TWIST = 29
+    MAX_TWIST = 30
+    CAPSULE_HEAD_INSET = 31
+    CAPSULE_TAIL_INSET = 32
+
+
 class AnalyticShape(IntEnum):
     SPHERE = 0
     CAPSULE = 1
@@ -79,6 +121,17 @@ class ParameterCurve:
 
 
 @dataclass(frozen=True, slots=True)
+class ChainFieldCurve:
+    field: ChainField
+    curve: ParameterCurve
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "field", ChainField(self.field))
+        if not isinstance(self.curve, ParameterCurve):
+            raise ValueError("chain field curve must use a ParameterCurve")
+
+
+@dataclass(frozen=True, slots=True)
 class BoneSpec:
     id: int
     name: str
@@ -120,6 +173,13 @@ class BoneSpec:
     xyz_lower: Vec3 = (-math.pi, -math.pi, -math.pi)
     xyz_upper: Vec3 = (math.pi, math.pi, math.pi)
     euler_order: int = 0
+    angular_limit_mode: AngularLimitMode = AngularLimitMode.FREE
+    swing_axis: Vec3 = (0.0, 1.0, 0.0)
+    max_swing: float = math.pi
+    min_twist: float = -math.pi
+    max_twist: float = math.pi
+    capsule_head_inset: float = 0.0
+    capsule_tail_inset: float = 0.0
 
     def __post_init__(self) -> None:
         _id("body", self.id)
@@ -140,9 +200,11 @@ class BoneSpec:
             "inverse_inertia",
             "xyz_lower",
             "xyz_upper",
+            "swing_axis",
         ):
             object.__setattr__(self, field_name, _vec3(field_name, getattr(self, field_name)))
         object.__setattr__(self, "rest_rotation", _quat("rest_rotation", self.rest_rotation))
+        object.__setattr__(self, "angular_limit_mode", AngularLimitMode(self.angular_limit_mode))
         initial_translation = (
             self.rest_translation
             if self.initial_translation is None
@@ -182,6 +244,9 @@ class BoneSpec:
             "angular_damping_constraint",
             "recovery_compliance",
             "recovery_damping",
+            "max_swing",
+            "capsule_head_inset",
+            "capsule_tail_inset",
         ):
             _nonnegative(field_name, getattr(self, field_name))
         if self.radius == 0.0:
@@ -193,6 +258,14 @@ class BoneSpec:
             raise ValueError("inverse inertia values must be nonnegative")
         if any(lower > upper for lower, upper in zip(self.xyz_lower, self.xyz_upper)):
             raise ValueError("XYZ lower bounds must not exceed XYZ upper bounds")
+        _finite_values("twist bounds", (self.min_twist, self.max_twist))
+        if self.max_swing > math.pi:
+            raise ValueError("maximum swing must not exceed pi")
+        if self.min_twist > self.max_twist:
+            raise ValueError("minimum twist must not exceed maximum twist")
+        if self.angular_limit_mode is AngularLimitMode.SWING_TWIST:
+            if math.sqrt(sum(value * value for value in self.swing_axis)) <= 1.0e-6:
+                raise ValueError("swing axis must be nonzero")
         if self.euler_order not in range(6):
             raise ValueError("Euler order must be an integer from 0 through 5")
         _u32("collision_layer", self.collision_layer)
@@ -212,6 +285,10 @@ class ChainSpec:
     linear_damping_curve: ParameterCurve | None = None
     angular_damping_curve: ParameterCurve | None = None
     radius_curve: ParameterCurve | None = None
+    field_curves: tuple[ChainFieldCurve, ...] = ()
+    attachment_constraint_id: int | None = None
+    attachment_local_anchor: Vec3 | None = None
+    attachment_target_local_anchor: Vec3 | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -220,6 +297,39 @@ class ChainSpec:
         if not self.body_ids:
             raise ValueError("chain requires at least one body")
         _reject_duplicates("chain body", self.body_ids)
+        field_curves = tuple(self.field_curves)
+        legacy_curves = (
+            (ChainField.GRAVITY_SCALE, self.gravity_scale_curve),
+            (ChainField.LINEAR_DAMPING, self.linear_damping_curve),
+            (ChainField.ANGULAR_DAMPING, self.angular_damping_curve),
+            (ChainField.RADIUS, self.radius_curve),
+        )
+        field_curves += tuple(
+            ChainFieldCurve(chain_field, curve)
+            for chain_field, curve in legacy_curves
+            if curve is not None
+        )
+        seen: set[ChainField] = set()
+        for item in field_curves:
+            if not isinstance(item, ChainFieldCurve):
+                raise ValueError("chain field curves must contain ChainFieldCurve values")
+            if item.field in seen:
+                raise ValueError(f"duplicate chain field {item.field.name}")
+            seen.add(item.field)
+        object.__setattr__(self, "field_curves", field_curves)
+        _optional_id("attachment constraint", self.attachment_constraint_id)
+        if self.attachment_local_anchor is not None:
+            object.__setattr__(
+                self,
+                "attachment_local_anchor",
+                _vec3("attachment local anchor", self.attachment_local_anchor),
+            )
+        if self.attachment_target_local_anchor is not None:
+            object.__setattr__(
+                self,
+                "attachment_target_local_anchor",
+                _vec3("attachment target local anchor", self.attachment_target_local_anchor),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,12 +493,23 @@ class WorldSpec:
             )
             if constraint_id is not None
         )
+        constraint_ids += tuple(
+            chain.attachment_constraint_id
+            for chain in self.chains
+            if chain.attachment_constraint_id is not None
+        )
         _reject_duplicates("constraint", constraint_ids)
         for bone in self.bones:
             if bone.parent_id is not None and bone.parent_id not in body_id_set:
                 raise ValueError(f"parent body {bone.parent_id} does not exist")
-            if bone.parent_id is not None and bone.joint_constraint_id is None:
-                raise ValueError(f"body {bone.id} with a parent requires a joint constraint ID")
+            if (
+                bone.parent_id is not None
+                and bone.joint_constraint_id is None
+                and bone.angular_constraint_id is None
+            ):
+                raise ValueError(
+                    f"body {bone.id} with a parent requires a joint or angular constraint ID"
+                )
             if bone.angular_constraint_id is not None and bone.parent_id is None:
                 raise ValueError(f"body {bone.id} angular constraint requires a parent")
             for excluded in bone.excluded_body_ids:

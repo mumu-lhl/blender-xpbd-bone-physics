@@ -14,10 +14,43 @@ from .collider_builder import (
     compile_analytic_colliders,
     compile_collision_filters,
 )
-from .model import BoneSpec, ChainSpec, CrossLinkSpec, ParameterCurve, Quat, Vec3, WorldSpec
+from .model import (
+    AngularLimitMode,
+    BoneSpec,
+    ChainField,
+    ChainSpec,
+    CrossLinkSpec,
+    ParameterCurve,
+    Quat,
+    Vec3,
+    WorldSpec,
+)
 
 BODY_COLUMNS = 46
 CONSTRAINT_COLUMNS = 24
+
+JOINT_FIELDS = frozenset(
+    (
+        ChainField.JOINT_COMPLIANCE,
+        ChainField.JOINT_DAMPING,
+        ChainField.ANGULAR_COMPLIANCE,
+        ChainField.ANGULAR_CONSTRAINT_DAMPING,
+        ChainField.RECOVERY_COMPLIANCE,
+        ChainField.RECOVERY_DAMPING,
+        ChainField.XYZ_LOWER_X,
+        ChainField.XYZ_LOWER_Y,
+        ChainField.XYZ_LOWER_Z,
+        ChainField.XYZ_UPPER_X,
+        ChainField.XYZ_UPPER_Y,
+        ChainField.XYZ_UPPER_Z,
+        ChainField.SWING_AXIS_X,
+        ChainField.SWING_AXIS_Y,
+        ChainField.SWING_AXIS_Z,
+        ChainField.MAX_SWING,
+        ChainField.MIN_TWIST,
+        ChainField.MAX_TWIST,
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,7 +250,7 @@ def compile_world_spec(spec: WorldSpec) -> NativeBuildBatch:
     bone_lookup = {bone.id: bone for bone in bones}
     constraints: list[CompiledConstraint] = []
     for bone in bones:
-        if bone.parent_id is not None:
+        if bone.joint_constraint_id is not None:
             parent = bone_lookup[bone.parent_id]
             constraints.append(_anchor_constraint(parent, bone))
         if bone.angular_constraint_id is not None:
@@ -225,6 +258,9 @@ def compile_world_spec(spec: WorldSpec) -> NativeBuildBatch:
             constraints.append(_angular_constraint(parent, bone))
         if bone.recovery_constraint_id is not None:
             constraints.append(_recovery_constraint(bone))
+    for chain in spec.chains:
+        if chain.attachment_constraint_id is not None:
+            constraints.append(_attachment_constraint(chain, bone_lookup))
     for cross_link in spec.cross_links:
         constraints.extend(
             build_cross_link_constraints(cross_link, spec.chains, bone_lookup)
@@ -256,14 +292,7 @@ def _apply_chain_curves(spec: WorldSpec) -> tuple[BoneSpec, ...]:
     replacements: dict[int, BoneSpec] = {bone.id: bone for bone in spec.bones}
     claimed: set[int] = set()
     for chain in spec.chains:
-        if not any(
-            (
-                chain.gravity_scale_curve,
-                chain.linear_damping_curve,
-                chain.angular_damping_curve,
-                chain.radius_curve,
-            )
-        ):
+        if not chain.field_curves:
             continue
         overlap = claimed.intersection(chain.body_ids)
         if overlap:
@@ -271,19 +300,94 @@ def _apply_chain_curves(spec: WorldSpec) -> tuple[BoneSpec, ...]:
         claimed.update(chain.body_ids)
         boundaries = chain_boundaries(chain, replacements)
         for index, body_id in enumerate(chain.body_ids):
-            s = (boundaries[index] + boundaries[index + 1]) * 0.5
             bone = replacements[body_id]
-            updates = {}
-            for field_name, curve in (
-                ("gravity_scale", chain.gravity_scale_curve),
-                ("linear_damping", chain.linear_damping_curve),
-                ("angular_damping", chain.angular_damping_curve),
-                ("radius", chain.radius_curve),
-            ):
-                if curve is not None:
-                    updates[field_name] = curve.sample(s)
+            midpoint = (boundaries[index] + boundaries[index + 1]) * 0.5
+            joint_s = boundaries[index]
+            updates = _chain_field_updates(
+                bone,
+                tuple(
+                    (item.field, item.curve.sample(joint_s if item.field in JOINT_FIELDS else midpoint))
+                    for item in chain.field_curves
+                ),
+            )
             replacements[body_id] = replace(bone, **updates)
     return tuple(sorted(replacements.values(), key=lambda bone: bone.id))
+
+
+def _chain_field_updates(
+    bone: BoneSpec,
+    samples: tuple[tuple[ChainField, float], ...],
+) -> dict[str, object]:
+    updates: dict[str, object] = {}
+    inverse_inertia = list(bone.inverse_inertia)
+    xyz_lower = list(bone.xyz_lower)
+    xyz_upper = list(bone.xyz_upper)
+    swing_axis = list(bone.swing_axis)
+    capsule_insets = [bone.capsule_head_inset, bone.capsule_tail_inset]
+    for field, value in samples:
+        if field is ChainField.INVERSE_MASS:
+            updates["inverse_mass"] = value
+        elif field in (ChainField.INERTIA_SCALE_X, ChainField.INERTIA_SCALE_Y, ChainField.INERTIA_SCALE_Z):
+            inverse_inertia[int(field) - int(ChainField.INERTIA_SCALE_X)] = value
+        elif field is ChainField.GRAVITY_SCALE:
+            updates["gravity_scale"] = value
+        elif field is ChainField.TRANSLATION_INERTIA:
+            updates["translation_inertia"] = value
+        elif field is ChainField.ROTATION_INERTIA:
+            updates["rotation_inertia"] = value
+        elif field is ChainField.LINEAR_DAMPING:
+            updates["linear_damping"] = value
+        elif field is ChainField.ANGULAR_DAMPING:
+            updates["angular_damping"] = value
+        elif field is ChainField.JOINT_COMPLIANCE:
+            updates["joint_compliance"] = value
+        elif field is ChainField.JOINT_DAMPING:
+            updates["joint_damping"] = value
+        elif field is ChainField.ANGULAR_COMPLIANCE:
+            updates["angular_compliance"] = value
+        elif field is ChainField.ANGULAR_CONSTRAINT_DAMPING:
+            updates["angular_damping_constraint"] = value
+        elif field is ChainField.RECOVERY_COMPLIANCE:
+            updates["recovery_compliance"] = value
+        elif field is ChainField.RECOVERY_DAMPING:
+            updates["recovery_damping"] = value
+        elif field is ChainField.RADIUS:
+            updates["radius"] = value
+        elif field is ChainField.MARGIN:
+            updates["margin"] = value
+        elif field is ChainField.FRICTION:
+            updates["friction"] = value
+        elif field is ChainField.RESTITUTION:
+            updates["restitution"] = value
+        elif field in (ChainField.XYZ_LOWER_X, ChainField.XYZ_LOWER_Y, ChainField.XYZ_LOWER_Z):
+            xyz_lower[int(field) - int(ChainField.XYZ_LOWER_X)] = value
+        elif field in (ChainField.XYZ_UPPER_X, ChainField.XYZ_UPPER_Y, ChainField.XYZ_UPPER_Z):
+            xyz_upper[int(field) - int(ChainField.XYZ_UPPER_X)] = value
+        elif field in (ChainField.SWING_AXIS_X, ChainField.SWING_AXIS_Y, ChainField.SWING_AXIS_Z):
+            swing_axis[int(field) - int(ChainField.SWING_AXIS_X)] = value
+        elif field is ChainField.MAX_SWING:
+            updates["max_swing"] = value
+        elif field is ChainField.MIN_TWIST:
+            updates["min_twist"] = value
+        elif field is ChainField.MAX_TWIST:
+            updates["max_twist"] = value
+        elif field is ChainField.CAPSULE_HEAD_INSET:
+            capsule_insets[0] = value
+        elif field is ChainField.CAPSULE_TAIL_INSET:
+            capsule_insets[1] = value
+        else:
+            raise ValueError(f"unsupported chain field {field!r}")
+    updates["inverse_inertia"] = tuple(inverse_inertia)
+    updates["xyz_lower"] = tuple(xyz_lower)
+    updates["xyz_upper"] = tuple(xyz_upper)
+    updates["swing_axis"] = tuple(swing_axis)
+    updates["capsule_head_inset"] = capsule_insets[0]
+    updates["capsule_tail_inset"] = capsule_insets[1]
+    if any(field in (ChainField.CAPSULE_HEAD_INSET, ChainField.CAPSULE_TAIL_INSET) for field, _value in samples):
+        length = bone.rest_length
+        updates["capsule_local_a"] = _lerp(bone.local_head, bone.local_tail, capsule_insets[0] / length)
+        updates["capsule_local_b"] = _lerp(bone.local_tail, bone.local_head, capsule_insets[1] / length)
+    return updates
 
 
 def _compile_bodies(bones: tuple[BoneSpec, ...]) -> dict[str, object]:
@@ -359,14 +463,24 @@ def _angular_constraint(parent: BoneSpec, child: BoneSpec) -> CompiledConstraint
     row[8] = child.angular_compliance
     row[9] = child.angular_damping_constraint
     row[10:14] = rest_relative
-    row[14:17] = child.xyz_lower
-    row[17:20] = child.xyz_upper
-    row[20] = float(child.euler_order)
+    if child.angular_limit_mode is AngularLimitMode.SWING_TWIST:
+        row[14:17] = child.swing_axis
+        row[17] = child.max_swing
+        row[18] = child.min_twist
+        row[19] = child.max_twist
+        kind = 6
+    else:
+        # Existing authored angular constraint IDs represented XYZ limits before
+        # AngularLimitMode existed; retain that migration behavior for one release.
+        row[14:17] = child.xyz_lower
+        row[17:20] = child.xyz_upper
+        row[20] = float(child.euler_order)
+        kind = 5
     return CompiledConstraint(
         id=child.angular_constraint_id,
         body_a=parent.id,
         body_b=child.id,
-        kind=5,
+        kind=kind,
         enabled=True,
         values=tuple(row),
         compliance=child.angular_compliance,
@@ -385,6 +499,31 @@ def _recovery_constraint(bone: BoneSpec) -> CompiledConstraint:
         enabled=True,
         values=tuple(row),
         compliance=bone.recovery_compliance,
+    )
+
+
+def _attachment_constraint(
+    chain: ChainSpec,
+    bones: Mapping[int, BoneSpec],
+) -> CompiledConstraint:
+    root = _chain_bone(chain, chain.body_ids[0], bones)
+    row = [0.0] * CONSTRAINT_COLUMNS
+    row[0:3] = root.local_head if chain.attachment_local_anchor is None else chain.attachment_local_anchor
+    row[3:6] = (
+        root.local_head
+        if chain.attachment_target_local_anchor is None
+        else chain.attachment_target_local_anchor
+    )
+    row[8] = root.joint_compliance
+    row[9] = root.joint_damping
+    return CompiledConstraint(
+        id=chain.attachment_constraint_id,
+        body_a=root.id,
+        body_b=0,
+        kind=3,
+        enabled=True,
+        values=tuple(row),
+        compliance=root.joint_compliance,
     )
 
 

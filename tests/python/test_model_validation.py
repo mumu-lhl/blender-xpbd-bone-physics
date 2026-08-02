@@ -1,14 +1,19 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import math
 import unittest
 
 from blender_extension.bone_physics.model import (
     AnalyticColliderSpec,
     AnalyticShape,
+    AngularLimitMode,
     BoneSpec,
+    ChainField,
+    ChainFieldCurve,
     ChainSpec,
     CollisionSurfaceSpec,
     CrossLinkSpec,
+    CurvePoint,
+    ParameterCurve,
     WorldSpec,
 )
 
@@ -26,6 +31,38 @@ def bone(body_id, *, parent_id=None, joint_id=None, angular_id=None, length=1.0)
 
 
 class ModelValidationTests(unittest.TestCase):
+    def test_chain_field_curves_reject_duplicates(self):
+        curve = ParameterCurve((CurvePoint(0.0, 0.0), CurvePoint(1.0, 1.0)))
+
+        with self.assertRaisesRegex(ValueError, "duplicate chain field"):
+            ChainSpec(
+                id="hair",
+                body_ids=(1,),
+                field_curves=(
+                    ChainFieldCurve(ChainField.GRAVITY_SCALE, curve),
+                    ChainFieldCurve(ChainField.GRAVITY_SCALE, curve),
+                ),
+            )
+
+        with self.assertRaisesRegex(ValueError, "duplicate chain field"):
+            ChainSpec(
+                id="legacy_and_general",
+                body_ids=(1,),
+                gravity_scale_curve=curve,
+                field_curves=(ChainFieldCurve(ChainField.GRAVITY_SCALE, curve),),
+            )
+
+    def test_bone_uses_one_primary_angular_limit_model(self):
+        spec = bone(1)
+        self.assertEqual(spec.angular_limit_mode, AngularLimitMode.FREE)
+
+        with self.assertRaisesRegex(ValueError, "swing axis"):
+            replace(
+                spec,
+                angular_limit_mode=AngularLimitMode.SWING_TWIST,
+                swing_axis=(0.0, 0.0, 0.0),
+            )
+
     def test_authoring_dataclasses_are_immutable(self):
         spec = bone(1)
 
