@@ -12,8 +12,12 @@ The reference acceptance runner uses a fixed 120 Hz physical step, runs the
 ```bash
 python tests/blender/run_reference.py \
   --acceptance tests/reference/acceptance.json \
-  --output artifacts/reference.json
+  --output artifacts/reference.json --backend native
 ```
+
+The native matrix requires the locally built abi3 module. Blender-side
+debugging is run through Blender MCP; do not start an unbounded Blender process
+from a shell.
 
 Rust, native-wheel, and Blender-headless checks run in the CI jobs when those
 toolchains are unavailable locally. Ordinary PR checks do not create Releases;

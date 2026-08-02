@@ -8,7 +8,14 @@
 
 **Tech Stack:** Rust stable, parry3d behind the collision adapter, PyO3/maturin, Blender 5.2 LTS Python API, serde/postcard for versioned checkpoints, GitHub Actions.
 
-## Handoff Status — Not Started
+## Handoff Status — Implementation complete; release evidence pending
+
+Tasks 1–10 are implemented in the repository, including deforming-mesh
+storage/contact, ownership-safe mesh input, mesh upload, CCD, checkpoints,
+bake/replay, native acceptance, packaging, and the fail-closed V1 gate. Fresh
+local evidence is recorded in `docs/HANDOFF.md`. The four-platform package
+matrix still requires a pushed exact-commit workflow run before a release
+candidate can be authorized. This plan does not authorize release creation.
 
 Do not begin this plan until the core, constraints/collision, and Blender
 runtime plans are complete.

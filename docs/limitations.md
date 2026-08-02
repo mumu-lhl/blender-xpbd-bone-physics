@@ -1,11 +1,14 @@
 # V1 limitations
 
-- Authoritative baking is an offline correctness path; preview quality tiers
-  intentionally use smaller iteration budgets.
-- Blender 5.2 official distribution coverage is platform-specific. macOS Intel
-  native loading can be checked with CPython, but there is no official Blender
-  5.2 Intel release to claim as a fresh-host Blender installation.
-- Native Rust and Blender validation must be completed by the corresponding CI
-  jobs when those toolchains are unavailable on the development host.
-- A release is not created by ordinary pull-request CI. A draft RC requires
-  explicit approval and complete, commit-matched platform evidence.
+V1 deliberately does not include wind, GPU solving, tearing, or cross-armature
+constraints. Invalid or open meshes use two-sided collision history; they do
+not receive a guessed global inside/outside classification.
+
+Floating-point results may differ within the approved acceptance tolerances
+between supported platforms. Blender 5.2 headless package evidence is required
+on Linux; macOS Intel records native/CPython loading evidence because an
+official Blender runner binary is not guaranteed there.
+
+The package contains the native module and Python runtime code needed by the
+extension. Users do not install Rust, pip packages, NumPy, or a system physics
+library.

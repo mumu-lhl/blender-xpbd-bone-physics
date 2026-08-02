@@ -1,6 +1,7 @@
 import unittest
 
 from scripts.ci.aggregate_acceptance import REQUIRED_CRITERIA, SUPPORTED_PLATFORMS, aggregate_acceptance
+from scripts.ci.build_v1_acceptance import build_v1_acceptance, derive_platform_reports
 
 
 def report(platform, commit="abc123", failures=None):
@@ -33,6 +34,76 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(artifact["draft_allowed"])
         artifact = aggregate_acceptance(reports, commit="abc123", github_sha="other", create_draft=True)
         self.assertFalse(artifact["draft_allowed"])
+
+    def test_builder_rejects_missing_reference_report(self):
+        with self.assertRaisesRegex(ValueError, "reference"):
+            build_v1_acceptance([], None, commit="abc123", github_sha="abc123")
+
+    def test_builder_rejects_reference_commit_mismatch(self):
+        reference = {"commit": "old", "backend": "native", "run_count": 60, "failures": [], "runs": [{}] * 60}
+        with self.assertRaisesRegex(ValueError, "commit"):
+            build_v1_acceptance([], reference, commit="abc123", github_sha="abc123")
+
+    def test_builder_rejects_missing_platform_criteria(self):
+        reference = {"commit": "abc123", "backend": "native", "run_count": 60, "failures": [], "runs": [{}] * 60}
+        report = {"platform": "linux-x86_64", "commit": "abc123", "status": "ok"}
+        with self.assertRaisesRegex(ValueError, "criteria"):
+            build_v1_acceptance([report], reference, commit="abc123", github_sha="abc123")
+
+    def test_builder_emits_all_criteria_for_complete_matrix(self):
+        reference = {"commit": "abc123", "backend": "native", "run_count": 60, "failures": [], "runs": [{}] * 60}
+        reports = []
+        for platform in SUPPORTED_PLATFORMS:
+            reports.append(
+                {
+                    "platform": platform,
+                    "commit": "abc123",
+                    "status": "ok",
+                    "package": {"native_count": 1},
+                    "verification": {"native_count": 1},
+                    "dependencies": {"status": "ok", "unexpected": []},
+                    "load_test": {"status": "ok"},
+                    "criteria": {criterion: True for criterion in REQUIRED_CRITERIA},
+                }
+            )
+        artifact = build_v1_acceptance(reports, reference, commit="abc123", github_sha="abc123")
+        self.assertTrue(artifact["success"])
+        self.assertEqual(len(artifact["criteria"]), len(REQUIRED_CRITERIA) * len(SUPPORTED_PLATFORMS))
+
+    def test_builder_rejects_duplicate_platform_evidence(self):
+        reference = {"commit": "abc123", "backend": "native", "run_count": 60, "failures": [], "runs": [{}] * 60}
+        report = {
+            "platform": "linux-x86_64",
+            "commit": "abc123",
+            "status": "ok",
+            "verification": {"native_count": 1},
+            "dependencies": {"status": "ok", "unexpected": []},
+            "load_test": {"status": "ok"},
+            "criteria": {criterion: True for criterion in REQUIRED_CRITERIA},
+        }
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            build_v1_acceptance([report, dict(report)], reference, commit="abc123", github_sha="abc123")
+
+    def test_builder_derives_criteria_from_raw_package_reports(self):
+        reference = {
+            "commit": "abc123",
+            "backend": "native",
+            "run_count": 60,
+            "failures": [],
+            "runs": [{"metrics": {"equal_time_position_error": 0.0, "equal_time_angle_error": 0.0, "repeat_position_error": 0.0, "repeat_angle_error": 0.0}}] * 60,
+        }
+        raw = {
+            "platform": "linux-x86_64",
+            "commit": "abc123",
+            "status": "ok",
+            "verification": {"native_count": 1},
+            "dependencies": {"status": "ok", "unexpected": [], "dependencies": []},
+            "load_test": {"status": "ok"},
+            "wheel_build": {"status": "ok"},
+        }
+        ci = {criterion: True for criterion in ("rust_tests", "workspace_clippy", "blender_headless", "documentation")}
+        result = derive_platform_reports([raw], reference, ci, commit="abc123")
+        self.assertEqual(set(result[0]["criteria"]), set(REQUIRED_CRITERIA))
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## V1
 
-- Added deterministic fixed-step bone simulation, deforming-mesh ownership checks,
-  authoritative checkpointing, bounded continuous collision queries, and native
-  diagnostics.
-- Added machine-checked reference acceptance and reproducible package tooling.
-- Draft release-candidate creation remains a manual, fail-closed workflow.
+- Deterministic oriented-XPBD bone simulation with constraints, contacts,
+  checkpoints, bake/replay, diagnostics, and pre-physics mesh ownership.
+- Native-backed ten-scenario acceptance matrix at 24/30/60 FPS with repeated
+  authoritative runs.
+- Reproducible self-contained Blender extension packaging with native load and
+  dependency evidence for Linux, Windows, and macOS architectures.
+
+Release publication is intentionally manual and is not performed by CI.

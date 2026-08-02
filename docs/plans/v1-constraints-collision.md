@@ -22,9 +22,9 @@
   Critical/Important findings.
 - The standalone Rust/dependency migration in `docs/HANDOFF.md` is complete.
 
-The final code baseline is remote commit
-`afb0519810b993f99e7b9d806a1758ee98fad1a3`. Exact CI and artifact evidence is
-recorded in `docs/HANDOFF.md`.
+The implementation baseline is the V1 completion branch. Exact local evidence
+and remaining cross-platform artifact requirements are recorded in
+`docs/HANDOFF.md`.
 
 ## Global Constraints
 
