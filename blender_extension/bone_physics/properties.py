@@ -82,6 +82,10 @@ def _chain_update(properties: bpy.types.PropertyGroup, _context: bpy.types.Conte
     _mark_dirty(properties, "chains")
 
 
+def _constraint_update(properties: bpy.types.PropertyGroup, _context: bpy.types.Context) -> None:
+    _mark_dirty(properties, "constraints")
+
+
 def _system_update(properties: bpy.types.PropertyGroup, _context: bpy.types.Context) -> None:
     _mark_dirty(properties, "systems")
 
@@ -141,7 +145,20 @@ class ChainProperties(bpy.types.PropertyGroup):
     tail_uuid: bpy.props.StringProperty(name="Tail Bone UUID", update=_chain_update)
     target_id: bpy.props.StringProperty(name="Target ID", update=_chain_update)
     closed: bpy.props.BoolProperty(name="Closed", default=False, update=_chain_update)
+    selected: bpy.props.BoolProperty(name="Selected", default=False, update=_constraint_update)
     curve_points: bpy.props.CollectionProperty(type=CurvePointProperties)
+
+
+class StructuralGroupProperties(bpy.types.PropertyGroup):
+    """Persisted authoring data for one generated cross-link lattice."""
+
+    first_constraint_id: bpy.props.IntProperty(name="First Constraint ID", min=1, max=0x7FFFFFFF, update=_constraint_update)
+    chain_ids: bpy.props.StringProperty(name="Chain IDs", update=_constraint_update)
+    samples: bpy.props.StringProperty(name="Samples", default="0.0, 1.0", update=_constraint_update)
+    diagonals: bpy.props.BoolProperty(name="Diagonals", default=False, update=_constraint_update)
+    closed: bpy.props.BoolProperty(name="Closed", default=False, update=_constraint_update)
+    compliance: bpy.props.FloatProperty(name="Compliance", default=1.0e-5, min=0.0, update=_constraint_update)
+    damping: bpy.props.FloatProperty(name="Damping", default=0.0, min=0.0, update=_constraint_update)
 
 
 class PhysicsSystemProperties(bpy.types.PropertyGroup):
@@ -157,12 +174,14 @@ class PhysicsSystemProperties(bpy.types.PropertyGroup):
     show_advanced: bpy.props.BoolProperty(name="Advanced", default=False)
     active_override_index: bpy.props.IntProperty(name="Active Override", default=0, min=0)
     active_curve_point_index: bpy.props.IntProperty(name="Active Curve Point", default=0, min=0)
+    active_structural_group_index: bpy.props.IntProperty(name="Active Structural Group", default=0, min=0)
     head: bpy.props.PointerProperty(type=EndpointProperties)
     tail: bpy.props.PointerProperty(type=EndpointProperties)
     interpolation: bpy.props.EnumProperty(name="Interpolation", items=_CURVE_INTERPOLATION_ITEMS, default="LINEAR", update=_system_update)
     curve_points: bpy.props.CollectionProperty(type=CurvePointProperties)
     overrides: bpy.props.CollectionProperty(type=BoneOverrideProperties)
     chains: bpy.props.CollectionProperty(type=ChainProperties)
+    structural_groups: bpy.props.CollectionProperty(type=StructuralGroupProperties)
 
 
 class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
@@ -193,6 +212,7 @@ CLASSES = (
     EndpointProperties,
     BoneOverrideProperties,
     ChainProperties,
+    StructuralGroupProperties,
     PhysicsSystemProperties,
     ArmaturePhysicsProperties,
 )

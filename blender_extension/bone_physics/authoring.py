@@ -12,7 +12,13 @@ from enum import Enum
 import math
 from typing import Iterable
 
-from .model import AngularLimitMode, ChainFieldCurve, CurveInterpolation, TargetBinding
+from .model import (
+    AngularLimitMode,
+    ChainFieldCurve,
+    CrossLinkSpec,
+    CurveInterpolation,
+    TargetBinding,
+)
 
 
 class ValidationSeverity(str, Enum):
@@ -146,10 +152,12 @@ class PhysicsSystemAuthoring:
     collision_policy: CollisionPolicy = CollisionPolicy()
     enabled: bool = True
     field_curves: tuple[ChainFieldCurve, ...] = ()
+    cross_links: tuple[CrossLinkSpec, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "chains", tuple(self.chains))
         object.__setattr__(self, "field_curves", tuple(self.field_curves))
+        object.__setattr__(self, "cross_links", tuple(self.cross_links))
 
 
 @dataclass(frozen=True, slots=True)

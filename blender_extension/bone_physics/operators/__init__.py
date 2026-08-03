@@ -1,6 +1,9 @@
 """Blender operators for Bone Physics authoring."""
 
-from .system import CLASSES
+from .constraint import CLASSES as CONSTRAINT_CLASSES
+from .system import CLASSES as SYSTEM_CLASSES
+
+CLASSES = SYSTEM_CLASSES + CONSTRAINT_CLASSES
 
 
 def register() -> None:

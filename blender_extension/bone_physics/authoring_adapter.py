@@ -22,6 +22,7 @@ from .model import (
     ChainField,
     ChainFieldCurve,
     ChainSpec,
+    CrossLinkSpec,
     CollisionSurfaceSpec,
     CurvePoint,
     CurveInterpolation,
@@ -99,7 +100,27 @@ def physics_system_from_rna(
         tail=tail,
         enabled=system.enabled,
         field_curves=system_curves,
+        cross_links=tuple(
+            CrossLinkSpec(
+                first_constraint_id=int(group.first_constraint_id),
+                chain_ids=_structural_chain_ids(group.chain_ids),
+                samples=_structural_samples(group.samples),
+                diagonals=bool(group.diagonals),
+                closed=bool(group.closed),
+                compliance=float(group.compliance),
+                damping=float(group.damping),
+            )
+            for group in getattr(system, "structural_groups", ())
+        ),
     )
+
+
+def _structural_chain_ids(value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _structural_samples(value: str) -> tuple[float, ...]:
+    return tuple(float(part.strip()) for part in value.split(",") if part.strip())
 
 
 def _endpoint_from_rna(endpoint: object) -> EndpointParameters:
@@ -150,6 +171,7 @@ def compile_authoring(
     allocator = StableIdAllocator(config.stable_ids, config.next_stable_id)
     bones: list[BoneSpec] = []
     chains: list[ChainSpec] = []
+    cross_links: list[CrossLinkSpec] = []
     claimed: set[str] = set()
     for system in sorted((item for item in config.physics_systems if item.enabled), key=lambda item: item.stable_id):
         for chain_authoring in sorted(system.chains, key=lambda item: item.stable_id):
@@ -187,11 +209,13 @@ def compile_authoring(
                     for override in _validated_overrides(path, chain_authoring.overrides)
                 ),
             ))
+        cross_links.extend(system.cross_links)
     analytic = tuple(item for item in collision_snapshot if isinstance(item, AnalyticColliderSpec))
     surfaces = tuple(item for item in collision_snapshot if isinstance(item, CollisionSurfaceSpec))
     return WorldSpec(
         bones=tuple(sorted(bones, key=lambda item: item.id)),
         chains=tuple(sorted(chains, key=lambda item: item.id)),
+        cross_links=tuple(sorted(cross_links, key=lambda item: item.first_constraint_id)),
         analytic_colliders=tuple(sorted(analytic, key=lambda item: item.id)),
         collision_surfaces=tuple(sorted(surfaces, key=lambda item: item.id)),
         gravity=config.gravity, fixed_dt=config.fixed_dt,

@@ -208,6 +208,44 @@ class AuthoringAdapterTests(unittest.TestCase):
         self.assertEqual(tuple(bone.id for bone in first.bones), (7, 8, 9))
         self.assertEqual(first, second)
 
+    def test_rna_structural_group_persists_as_generated_cross_links(self):
+        chain = lambda identifier, stable_id, bone: SimpleNamespace(
+            id=identifier, stable_id=stable_id, head_uuid=bone, tail_uuid=bone,
+            target_id="", closed=False, curve_points=(),
+        )
+        endpoint = SimpleNamespace(**{
+            name: getattr(EndpointParameters(), name)
+            for name in EndpointParameters.__dataclass_fields__
+        })
+        endpoint.angular_limit_mode = endpoint.angular_limit_mode.name
+        endpoint.interpolation = endpoint.interpolation.name
+        group = SimpleNamespace(
+            first_constraint_id=100,
+            chain_ids="root,mid,tip",
+            samples="0.0, 1.0",
+            diagonals=False,
+            closed=True,
+            compliance=1.0e-5,
+            damping=0.0,
+        )
+        rna = SimpleNamespace(
+            id="skirt", stable_id=10, enabled=True, head=endpoint, tail=endpoint,
+            interpolation="LINEAR", curve_points=(), overrides=(),
+            chains=(chain("root", 20, "root"), chain("mid", 21, "mid"), chain("tip", 22, "tip")),
+            structural_groups=(group,),
+        )
+
+        authoring = physics_system_from_rna(
+            rna, {"root": ("root",), "mid": ("mid",), "tip": ("tip",)}
+        )
+        world = compile_authoring(
+            ArmatureAuthoring(id="armature", physics_systems=(authoring,)), skeleton()
+        )
+
+        self.assertEqual(len(world.cross_links), 1)
+        self.assertEqual(world.cross_links[0].chain_ids, ("root", "mid", "tip"))
+        self.assertEqual(len(compile_world_spec(world).constraints["ids"]), 9)
+
 
 if __name__ == "__main__":
     unittest.main()

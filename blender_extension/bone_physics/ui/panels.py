@@ -110,4 +110,48 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
                     box.prop(override.parameters, field)
 
 
-CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters)
+class BONE_PHYSICS_PT_constraints(bpy.types.Panel):
+    bl_idname = "BONE_PHYSICS_PT_constraints"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bone Physics"
+    bl_label = "Structural Constraints"
+    bl_parent_id = "BONE_PHYSICS_PT_root"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return BONE_PHYSICS_PT_parameters.poll(context)
+
+    def draw(self, context: bpy.types.Context) -> None:
+        settings = context.object.bone_physics
+        system = settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
+        layout = self.layout
+        selection = layout.box()
+        selection.label(text="Selected Chains")
+        for chain in system.chains:
+            selection.prop(chain, "selected", text=chain.id or "Unnamed chain")
+        actions = layout.row(align=True)
+        actions.operator("bone_physics.structural_add", icon="ADD")
+        actions.operator("bone_physics.structural_edit", text="", icon="GREASEPENCIL")
+        actions.operator("bone_physics.structural_remove", text="", icon="REMOVE")
+        if not system.structural_groups:
+            layout.label(text="Select chains, then add horizontal, diagonal, or seam links.")
+            return
+        layout.template_list(
+            "BONE_PHYSICS_UL_structural_groups", "", system, "structural_groups",
+            system, "active_structural_group_index",
+        )
+        group = system.structural_groups[min(system.active_structural_group_index, len(system.structural_groups) - 1)]
+        sample_count = len(tuple(part for part in group.samples.split(",") if part.strip()))
+        chain_count = len(tuple(part for part in group.chain_ids.split(",") if part.strip()))
+        pair_count = max(0, chain_count - 1 + int(group.closed))
+        generated_count = pair_count * (sample_count + (2 * max(0, sample_count - 1) if group.diagonals else 0))
+        inspector = layout.box()
+        inspector.label(text="Generated Inspector (read-only)")
+        inspector.label(text=f"Constraints: {generated_count}")
+        inspector.label(text=f"IDs: {group.first_constraint_id}…{group.first_constraint_id + max(0, generated_count - 1)}")
+        inspector.label(text="Current error: rebuild required")
+
+
+CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_constraints)

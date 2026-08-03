@@ -26,4 +26,17 @@ class BONE_PHYSICS_UL_curve_points(bpy.types.UIList):
         row.prop(item, "tangent", text="Tangent")
 
 
-CLASSES = (BONE_PHYSICS_UL_systems, BONE_PHYSICS_UL_overrides, BONE_PHYSICS_UL_curve_points)
+class BONE_PHYSICS_UL_structural_groups(bpy.types.UIList):
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_property, _index):
+        topology = "Seam" if item.closed else "Open"
+        if item.diagonals:
+            topology += " + diagonals"
+        layout.label(text=f"{topology}: {item.chain_ids}")
+
+
+CLASSES = (
+    BONE_PHYSICS_UL_systems,
+    BONE_PHYSICS_UL_overrides,
+    BONE_PHYSICS_UL_curve_points,
+    BONE_PHYSICS_UL_structural_groups,
+)
