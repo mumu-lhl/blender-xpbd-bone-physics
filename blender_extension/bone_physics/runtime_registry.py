@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 
 from .diagnostics import (
     DiagnosticBindings,
+    DiagnosticItem,
     authoring_diagnostics,
     diagnostic_bindings,
     map_runtime_error,
@@ -277,8 +278,18 @@ def _publish_authoring_diagnostics(scene: object, armature: object) -> None:
         from .authoring_adapter import validate_armature_rna
 
         diagnostics = authoring_diagnostics(validate_armature_rna(armature))
-    except Exception:
-        diagnostics = ()
+    except Exception as validation_error:
+        # Validator failures are diagnostics too; do not hide them behind the
+        # later native/compiler exception.
+        diagnostics = (
+            DiagnosticItem(
+                "authoring.validation",
+                "error",
+                "armature",
+                str(getattr(settings, "id", "armature")),
+                (("message", str(validation_error)),),
+            ),
+        )
     for diagnostic in diagnostics:
         item = items.add()
         item.code = diagnostic.code

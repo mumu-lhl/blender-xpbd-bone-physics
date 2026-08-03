@@ -104,9 +104,11 @@ class RuntimeRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid chain"):
             registry.ensure(Pointer(1), armature)
 
-        self.assertEqual(len(settings.diagnostic_items), 1)
-        self.assertEqual(settings.diagnostic_items[0].entity_kind, "runtime")
-        self.assertTrue(settings.diagnostic_items[0].code.startswith("authoring."))
+        self.assertEqual(len(settings.diagnostic_items), 2)
+        self.assertEqual(settings.diagnostic_items[0].code, "authoring.validation")
+        self.assertEqual(settings.diagnostic_items[0].entity_kind, "armature")
+        self.assertEqual(settings.diagnostic_items[1].entity_kind, "runtime")
+        self.assertTrue(settings.diagnostic_items[1].code.startswith("authoring."))
 
 
 if __name__ == "__main__":
