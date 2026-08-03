@@ -8,6 +8,15 @@ python -m pip install maturin==1.14.1
 maturin build --release --manifest-path crates/bone_physics_py/Cargo.toml
 ```
 
+From the repository root, the pinned equivalent is:
+
+```bash
+just build-native
+```
+
+This writes the abi3 wheel to `target/wheels/`. Set `MATURIN` to override
+the default `uv tool run` command when using a locally installed maturin.
+
 Use `scripts/package_extension.py` to create a normalized archive and
 `scripts/verify_package.py` to verify its checksum, manifest, ordering, and
 platform-native module. `scripts/check_native_deps.py` records dynamic-library
