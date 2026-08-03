@@ -135,7 +135,9 @@ def collision_resources_from_rna(resources: Iterable[object]):
             result.append(AnalyticCollisionResource(
                 id=item.id, stable_id=int(item.stable_id), shape=getattr(item, "shape"),
                 binding=getattr(item, "binding"), object_name=getattr(item, "object_name") or None,
-                bone_name=getattr(item, "bone_name") or None, radius=float(getattr(item, "radius")),
+                bone_name=getattr(item, "bone_name") or None, translation=tuple(item.translation),
+                rotation=tuple(item.rotation), radius=float(item.radius), local_a=tuple(item.local_a),
+                local_b=tuple(item.local_b), half_extents=tuple(item.half_extents), enabled=bool(item.enabled),
             ))
         elif kind == "MESH":
             result.append(MeshCollisionResource(
@@ -145,6 +147,7 @@ def collision_resources_from_rna(resources: Iterable[object]):
                 excluded_regions=tuple(int(value) for value in _csv(item.excluded_regions)),
                 ignored_body_regions=tuple(int(value) for value in _csv(item.ignored_body_regions)),
                 weight_merges=tuple(tuple(part.strip() for part in value.split(":", 1)) for value in _csv(item.weight_merges)),
+                enabled=bool(item.enabled),
             ))
         else:
             result.append(CollisionCollectionAuthoring(item.id, int(item.stable_id), _csv(item.member_ids), item.enabled))
@@ -226,6 +229,8 @@ def compile_authoring(
     matrix = compile_collision_matrix(config.physics_systems)
     bones: list[BoneSpec] = []
     bone_system: dict[int, PhysicsSystemAuthoring] = {}
+    bone_uuid_ids: dict[str, int] = {}
+    bone_chain: dict[int, str] = {}
     chains: list[ChainSpec] = []
     cross_links: list[CrossLinkSpec] = []
     claimed: set[str] = set()
@@ -255,6 +260,8 @@ def compile_authoring(
                 )
                 bones.append(bone)
                 bone_system[bone.id] = system
+                bone_uuid_ids[uuid] = bone.id
+                bone_chain[bone.id] = chain_authoring.id
             chains.append(ChainSpec(
                 id=chain_authoring.id,
                 body_ids=tuple(ids[uuid] for uuid in path),
@@ -270,7 +277,7 @@ def compile_authoring(
                 ),
             ))
         cross_links.extend(system.cross_links)
-    bones = _compile_body_collision_filters(bones, bone_system)
+    bones = _compile_body_collision_filters(bones, bone_system, bone_uuid_ids, bone_chain)
     analytic, surfaces = _collision_resources(config, collision_snapshot)
     return WorldSpec(
         bones=tuple(sorted(bones, key=lambda item: item.id)),
@@ -283,17 +290,21 @@ def compile_authoring(
 
 
 def _compile_body_collision_filters(
-    bones: list[BoneSpec], systems: dict[int, PhysicsSystemAuthoring]
+    bones: list[BoneSpec], systems: dict[int, PhysicsSystemAuthoring],
+    uuid_ids: dict[str, int], chains: dict[int, str],
 ) -> list[BoneSpec]:
     """Apply direct parent and explicit authoring exclusions after system masks."""
     from dataclasses import replace
 
-    by_name = {bone.name: bone.id for bone in bones}
     result = []
     for bone in bones:
         policy = systems[bone.id].collision_policy
-        excluded = set(policy.explicit_excluded_bone_uuids)
-        body_ids = {by_name[name] for name in excluded if name in by_name}
+        body_ids = {uuid_ids[uuid] for uuid in policy.explicit_excluded_bone_uuids if uuid in uuid_ids}
+        if not policy.cross_chain_collision:
+            body_ids.update(
+                other.id for other in bones
+                if systems[other.id].id == systems[bone.id].id and chains[other.id] != chains[bone.id]
+            )
         if bone.parent_id is not None:
             body_ids.add(bone.parent_id)
         constraint_ids = () if bone.joint_constraint_id is None else (bone.joint_constraint_id,)
@@ -312,18 +323,31 @@ def _collision_resources(
     """Resolve selected reusable resources without leaking geometry backend types."""
     raw = tuple(snapshot)
     resources = {item.id: item for item in config.collision_resources}
+    if len(resources) != len(config.collision_resources):
+        raise ValueError("collision resource IDs must be unique")
     wanted = {
         resource_id
         for system in config.physics_systems if system.enabled
         for resource_id in system.collision_policy.resource_ids
     }
     expanded: set[str] = set()
-    for resource_id in wanted:
+
+    def expand(resource_id: str, ancestry: tuple[str, ...] = ()) -> None:
+        if resource_id in ancestry:
+            raise ValueError("collision resource collections must not cycle")
         resource = resources.get(resource_id)
+        if resource is None:
+            raise ValueError(f"collision resource {resource_id!r} is missing")
+        if not resource.enabled:
+            return
         if isinstance(resource, CollisionCollectionAuthoring):
-            expanded.update(resource.resource_ids)
-        else:
-            expanded.add(resource_id)
+            for member_id in resource.resource_ids:
+                expand(member_id, (*ancestry, resource_id))
+            return
+        expanded.add(resource_id)
+
+    for resource_id in wanted:
+        expand(resource_id)
     analytic = [item for item in raw if isinstance(item, AnalyticColliderSpec)]
     surfaces = [item for item in raw if isinstance(item, CollisionSurfaceSpec)]
     for resource_id in sorted(expanded):
@@ -344,6 +368,8 @@ def _collision_resources(
                 upstream_weight_merges=resource.weight_merges, thickness=resource.thickness,
                 simplify_max_error=resource.simplification,
             ))
+        else:
+            raise ValueError(f"collision resource {resource_id!r} has an invalid kind")
     return (
         tuple(sorted({item.id: item for item in analytic}.values(), key=lambda item: item.id)),
         tuple(sorted({item.id: item for item in surfaces}.values(), key=lambda item: item.id)),

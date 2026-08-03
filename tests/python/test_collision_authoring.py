@@ -49,6 +49,29 @@ class CollisionAuthoringTests(unittest.TestCase):
         self.assertEqual(world.bones[1].excluded_body_ids, (world.bones[0].id,))
         self.assertEqual(world.bones[0].collision_layer, 1)
 
+    def test_nested_collections_and_uuid_exclusions_do_not_silently_skip(self):
+        system_a = PhysicsSystemAuthoring(
+            "hair", 1,
+            (ChainAuthoring("left", 2, ("uuid-left",)), ChainAuthoring("right", 3, ("uuid-right",))),
+            collision_policy=CollisionPolicy(resource_ids=("outer",), cross_chain_collision=False, explicit_excluded_bone_uuids=("uuid-right",)),
+        )
+        resources = (
+            AnalyticCollisionResource("head", 10, AnalyticShape.CAPSULE, local_a=(1, 2, 3), local_b=(4, 5, 6)),
+            CollisionCollectionAuthoring("inner", 11, ("head",)),
+            CollisionCollectionAuthoring("outer", 12, ("inner",)),
+        )
+        world = compile_authoring(ArmatureAuthoring("armature", (system_a,), collision_resources=resources), (
+            SkeletonBone("uuid-left", "different-left-name", None, (0, 0, 0), (0, 1, 0)),
+            SkeletonBone("uuid-right", "different-right-name", None, (1, 0, 0), (1, 1, 0)),
+        ))
+        self.assertEqual(world.analytic_colliders[0].local_a, (1.0, 2.0, 3.0))
+        self.assertEqual(world.bones[0].excluded_body_ids, (world.bones[1].id,))
+        cyclic = ArmatureAuthoring("armature", (system_a,), collision_resources=(
+            CollisionCollectionAuthoring("outer", 10, ("inner",)), CollisionCollectionAuthoring("inner", 11, ("outer",)),
+        ))
+        with self.assertRaisesRegex(ValueError, "must not cycle"):
+            compile_authoring(cyclic, (SkeletonBone("uuid-left", "left", None, (0, 0, 0), (0, 1, 0)), SkeletonBone("uuid-right", "right", None, (1, 0, 0), (1, 1, 0))))
+
 
 if __name__ == "__main__":
     unittest.main()

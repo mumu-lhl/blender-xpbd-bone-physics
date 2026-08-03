@@ -374,6 +374,13 @@ def _identity_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
         config.resource_ids,
         "uuid.duplicate",
     )
+    _duplicates(issues, "collision_resource", (item.id for item in config.collision_resources), "uuid.duplicate")
+    _duplicates(issues, "collision_resource_stable_id", (str(item.stable_id) for item in config.collision_resources), "stable_id.duplicate")
+    for item in config.collision_resources:
+        if not item.id:
+            issues.append(_issue("resource.id.invalid", ValidationSeverity.ERROR, (str(item.id),)))
+        if isinstance(item.stable_id, bool) or not isinstance(item.stable_id, int) or not 0 < item.stable_id <= 0xFFFFFFFF:
+            issues.append(_issue("resource.stable_id.invalid", ValidationSeverity.ERROR, (item.id,)))
     stable_values = tuple(system.stable_id for system in config.physics_systems)
     stable_values += tuple(chain.stable_id for system in config.physics_systems for chain in system.chains)
     stable_values += tuple(stable_id for _key, stable_id in config.stable_ids)
@@ -434,7 +441,8 @@ def _collision_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
     enabled = tuple(system for system in config.physics_systems if system.enabled)
     if len(enabled) > 32:
         issues.append(_issue("collision.layers.exhausted", ValidationSeverity.ERROR, tuple(sorted(system.id for system in enabled)), (("limit", 32),)))
-    resources = set(config.resource_ids)
+    resources = set(config.resource_ids) | {item.id for item in config.collision_resources}
+    collision_resources = {item.id: item for item in config.collision_resources}
     systems = {system.id for system in config.physics_systems}
     for system in config.physics_systems:
         policy = system.collision_policy
@@ -460,7 +468,25 @@ def _collision_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
                 (system.id, bone_uuid),
                 (("bone_uuid", bone_uuid),),
             ))
+    for resource in config.collision_resources:
+        if isinstance(resource, CollisionCollectionAuthoring):
+            for member_id in resource.resource_ids:
+                if member_id not in collision_resources:
+                    issues.append(_issue("resource.missing", ValidationSeverity.ERROR, (resource.id, member_id)))
+    if _collection_cycle(collision_resources):
+        issues.append(_issue("collision.collection.cycle", ValidationSeverity.ERROR, tuple(sorted(collision_resources))))
     return issues
+
+
+def _collection_cycle(resources: dict[str, object]) -> bool:
+    def visit(resource_id: str, trail: set[str]) -> bool:
+        resource = resources.get(resource_id)
+        if not isinstance(resource, CollisionCollectionAuthoring):
+            return False
+        if resource_id in trail:
+            return True
+        return any(visit(member_id, trail | {resource_id}) for member_id in resource.resource_ids)
+    return any(visit(resource_id, set()) for resource_id in resources)
 
 
 def _scalar_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:

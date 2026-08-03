@@ -176,12 +176,16 @@ class BONE_PHYSICS_PT_collision_resources(bpy.types.Panel):
         actions = row.column(align=True)
         actions.operator("bone_physics.collision_resource_add", text="", icon="ADD")
         actions.operator("bone_physics.collision_resource_duplicate", text="", icon="DUPLICATE")
+        actions.operator("bone_physics.collision_resource_mirror", text="", icon="MOD_MIRROR")
         actions.operator("bone_physics.collision_resource_remove", text="", icon="REMOVE")
         if not settings.collision_resources:
             return
         resource = settings.collision_resources[min(settings.active_collision_resource_index, len(settings.collision_resources) - 1)]
         layout.prop(resource, "kind")
         layout.prop(resource, "enabled")
+        row = layout.row(align=True)
+        row.operator("bone_physics.collision_resource_bind", icon="CONSTRAINT_BONE")
+        row.operator("bone_physics.collision_resource_toggle", icon="HIDE_OFF")
         if resource.kind == "ANALYTIC":
             layout.prop(resource, "shape")
             layout.prop(resource, "binding")
@@ -189,6 +193,13 @@ class BONE_PHYSICS_PT_collision_resources(bpy.types.Panel):
             if resource.binding == "BONE":
                 layout.prop(resource, "bone_name")
             layout.prop(resource, "radius")
+            if resource.shape == "CAPSULE":
+                layout.prop(resource, "local_a")
+                layout.prop(resource, "local_b")
+            elif resource.shape == "ROUNDED_BOX":
+                layout.prop(resource, "half_extents")
+            layout.prop(resource, "translation")
+            layout.prop(resource, "rotation")
         elif resource.kind == "MESH":
             for name in ("object_name", "thickness", "simplification", "excluded_materials", "excluded_regions", "ignored_body_regions", "weight_merges"):
                 layout.prop(resource, name)

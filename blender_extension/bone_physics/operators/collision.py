@@ -21,6 +21,10 @@ def _active_resource(settings: bpy.types.PropertyGroup):
     )]
 
 
+def _references(values: str, resource_id: str) -> bool:
+    return resource_id in {value.strip() for value in values.split(",") if value.strip()}
+
+
 class BONE_PHYSICS_OT_collision_resource_add(bpy.types.Operator):
     bl_idname = "bone_physics.collision_resource_add"
     bl_label = "Add Collision Resource"
@@ -80,8 +84,10 @@ class BONE_PHYSICS_OT_collision_resource_remove(bpy.types.Operator):
     def execute(self, context):
         settings = _active_armature(context).bone_physics
         resource = _active_resource(settings)
-        references = [system.name or system.id for system in settings.physics_systems if resource.id in system.collision_resource_ids.split(",")]
-        references += [item.name or item.id for item in settings.collision_resources if item.kind == "COLLECTION" and resource.id in item.member_ids.split(",")]
+        references = [system.name or system.id for system in settings.physics_systems if _references(system.collision_resource_ids, resource.id)]
+        # This includes nested collections: every collection must directly name
+        # its child, so deleting any referenced descendant remains guarded.
+        references += [item.name or item.id for item in settings.collision_resources if item.kind == "COLLECTION" and _references(item.member_ids, resource.id)]
         if references:
             self.report({"ERROR"}, "Resource is referenced by: " + ", ".join(sorted(references)))
             return {"CANCELLED"}
