@@ -26,6 +26,7 @@ BLENDER_TEST_SCRIPTS = (
     "test_prephysics_order.py",
     "test_pose_roundtrip.py",
     "test_runtime_handler.py",
+    "test_ui_registration.py",
 )
 
 
