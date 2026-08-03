@@ -56,6 +56,26 @@ class DiagnosticBindings:
 
 def diagnostic_bindings(config: object) -> DiagnosticBindings:
     """Build ID-to-authoring ownership without importing Blender or native code."""
+    # Compiled worlds retain the generated IDs directly; this keeps diagnostics
+    # useful even when no serialized authoring assignment table was available.
+    if hasattr(config, "bones") and hasattr(config, "chains"):
+        bodies = {
+            bone.id: DiagnosticOwner("bone", bone.name)
+            for bone in config.bones
+        }
+        constraints = {
+            constraint_id: DiagnosticOwner("bone", bone.name)
+            for bone in config.bones
+            for constraint_id in (
+                bone.joint_constraint_id,
+                bone.angular_constraint_id,
+                bone.recovery_constraint_id,
+            )
+            if constraint_id is not None
+        }
+        colliders = {bone.collider_id: DiagnosticOwner("bone", bone.name) for bone in config.bones}
+        meshes = {surface.id: DiagnosticOwner("mesh", surface.object_name) for surface in config.collision_surfaces}
+        return DiagnosticBindings(bodies, constraints, colliders, meshes)
     body_owner: dict[str, DiagnosticOwner] = {}
     chain_owner: dict[str, DiagnosticOwner] = {}
     for system in getattr(config, "physics_systems", ()):

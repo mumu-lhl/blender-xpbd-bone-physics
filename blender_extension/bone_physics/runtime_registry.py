@@ -111,6 +111,7 @@ class RuntimeRegistry:
         self._worlds[key] = RuntimeEntry(scene, armature, spec, replacement)
         if previous is not None:
             _destroy(previous.world)
+        _clear_diagnostics(armature)
         return replacement
 
     def world(self, scene: object, armature: object):
@@ -174,6 +175,7 @@ class RuntimeRegistry:
                     except Exception as error:
                         entry.world.last_error = error
                         entry.world.paused = True
+                        _set_runtime_diagnostic(entry.armature, error)
         return result
 
     def _disable_entry(self, entry: RuntimeEntry) -> None:
@@ -217,6 +219,28 @@ def _invalidate_cache(world: object, reason: str) -> None:
     invalidate = getattr(getattr(world, "cache", None), "invalidate", None)
     if invalidate is not None:
         invalidate(reason)
+
+
+def _clear_diagnostics(armature: object | None) -> None:
+    settings = getattr(armature, "bone_physics", None)
+    items = getattr(settings, "diagnostic_items", None)
+    if items is not None:
+        while len(items):
+            items.remove(len(items) - 1)
+
+
+def _set_runtime_diagnostic(armature: object, error: Exception) -> None:
+    settings = getattr(armature, "bone_physics", None)
+    items = getattr(settings, "diagnostic_items", None)
+    if items is None:
+        return
+    _clear_diagnostics(armature)
+    item = items.add()
+    item.code = f"runtime.{type(error).__name__}"
+    item.severity = "error"
+    item.entity_kind = "runtime"
+    item.entity_id = str(getattr(error, "args", ("runtime",))[0])
+    item.stable_id = 0
 
 
 def mark_dirty(owner_pointer: int, category: str) -> None:

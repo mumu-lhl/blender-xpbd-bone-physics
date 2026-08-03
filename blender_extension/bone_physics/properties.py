@@ -100,6 +100,39 @@ def _armature_update(
     _mark_dirty(properties, "world")
 
 
+def _overlay_update(
+    properties: bpy.types.PropertyGroup, _context: bpy.types.Context
+) -> None:
+    """Synchronize viewport draw handlers with the persisted overlay toggle."""
+    try:
+        from . import viewport
+        import bpy as _bpy
+
+        for screen in _bpy.data.screens:
+            for area in screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                if properties.show_viewport_overlays:
+                    viewport.enable_overlay(area)
+                else:
+                    viewport.disable_overlay(area)
+    except (AttributeError, ImportError, RuntimeError):
+        return
+
+
+class DiagnosticItemProperties(bpy.types.PropertyGroup):
+    code: bpy.props.StringProperty(name="Code")
+    severity: bpy.props.EnumProperty(
+        name="Severity",
+        items=(("error", "Error", ""), ("warning", "Warning", ""), ("info", "Info", "")),
+        default="error",
+    )
+    entity_kind: bpy.props.StringProperty(name="Entity Kind")
+    entity_id: bpy.props.StringProperty(name="Entity ID")
+    stable_id: bpy.props.IntProperty(name="Stable ID", min=0)
+    object_name: bpy.props.StringProperty(name="Object")
+
+
 def _global_enabled_update(
     properties: bpy.types.PropertyGroup, _context: bpy.types.Context
 ) -> None:
@@ -231,7 +264,7 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
     fixed_dt: bpy.props.FloatProperty(name="Fixed Time Step", default=1.0 / 120.0, min=0.0, update=_armature_update)
     global_enabled: bpy.props.BoolProperty(name="Enable Physics", default=True, update=_global_enabled_update)
     show_viewport_overlays: bpy.props.BoolProperty(
-        name="Viewport Overlays", default=False, update=_armature_update
+        name="Viewport Overlays", default=False, update=_overlay_update
     )
     workspace: bpy.props.EnumProperty(
         name="Workspace",
@@ -249,6 +282,8 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
     physics_systems: bpy.props.CollectionProperty(type=PhysicsSystemProperties)
     collision_resources: bpy.props.CollectionProperty(type=CollisionResourceProperties)
     active_collision_resource_index: bpy.props.IntProperty(name="Active Collision Resource", min=0, update=_collision_update)
+    diagnostic_items: bpy.props.CollectionProperty(type=DiagnosticItemProperties)
+    active_diagnostic_index: bpy.props.IntProperty(name="Active Diagnostic", min=0)
 
 
 CLASSES = (
@@ -258,6 +293,7 @@ CLASSES = (
     ChainProperties,
     StructuralGroupProperties,
     CollisionResourceProperties,
+    DiagnosticItemProperties,
     PhysicsSystemProperties,
     ArmaturePhysicsProperties,
 )

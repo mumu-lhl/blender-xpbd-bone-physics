@@ -82,6 +82,6 @@ def _draw_overlay(key: int) -> None:
             shader.bind()
             shader.uniform_float("color", _COLORS[category])
             batch.draw(shader)
-    except (ReferenceError, RuntimeError):
+    except Exception:
         # Blender can destroy an area while a redraw is queued.
         return

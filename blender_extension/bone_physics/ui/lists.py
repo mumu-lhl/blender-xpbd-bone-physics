@@ -49,6 +49,7 @@ class BONE_PHYSICS_UL_diagnostics(bpy.types.UIList):
         operator = layout.operator("bone_physics.diagnostic_select", text="", icon="RESTRICT_SELECT_OFF")
         operator.entity_kind = item.entity_kind
         operator.entity_id = item.entity_id
+        operator.object_name = getattr(item, "object_name", "")
 
 
 CLASSES = (
