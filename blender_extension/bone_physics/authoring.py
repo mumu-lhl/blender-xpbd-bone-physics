@@ -256,6 +256,14 @@ def stable_id_range_end(first_id: int, count: int, maximum: int = 0x7FFFFFFF) ->
     return end
 
 
+def next_stable_id_after_range(
+    first_id: int, count: int, maximum: int = 0x7FFFFFFF
+) -> int:
+    """Advance an RNA stable-ID cursor, wrapping after the maximum value."""
+    end = stable_id_range_end(first_id, count, maximum)
+    return 1 if end == maximum else end + 1
+
+
 def validate_authoring(config: ArmatureAuthoring) -> tuple[ValidationIssue, ...]:
     """Return deterministic, presentation-free validation diagnostics."""
     issues = list(_identity_issues(config))

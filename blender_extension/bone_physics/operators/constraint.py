@@ -6,7 +6,7 @@ import math
 
 import bpy
 
-from ..authoring import stable_id_range_end
+from ..authoring import next_stable_id_after_range, stable_id_range_end
 from .system import _active_armature
 
 
@@ -51,7 +51,7 @@ def _allocate_constraint_range(settings: bpy.types.PropertyGroup, count: int) ->
     while any(value in used for value in range(candidate, candidate + count)):
         candidate += 1
         stable_id_range_end(candidate, count)
-    settings.next_stable_id = candidate + count
+    settings.next_stable_id = next_stable_id_after_range(candidate, count)
     return candidate
 
 

@@ -10,6 +10,7 @@ from blender_extension.bone_physics.authoring import (
     PhysicsSystemAuthoring,
     StableIdAllocator,
     ValidationSeverity,
+    next_stable_id_after_range,
     stable_id_range_end,
     validate_authoring,
 )
@@ -66,6 +67,9 @@ class AuthoringTests(unittest.TestCase):
         self.assertEqual(stable_id_range_end(0x7FFFFFFE, 2), 0x7FFFFFFF)
         with self.assertRaisesRegex(ValueError, "RNA integer limit"):
             stable_id_range_end(0x7FFFFFFF, 2)
+
+    def test_structural_constraint_range_wraps_after_last_rna_id(self):
+        self.assertEqual(next_stable_id_after_range(0x7FFFFFFF, 1), 1)
 
     def test_records_are_frozen_and_validation_keeps_display_text_out_of_model(self):
         endpoint = EndpointParameters(radius=-1.0, min_twist=1.0, max_twist=0.0)
