@@ -7,6 +7,7 @@ from pathlib import Path
 
 from blender_extension.bone_physics.preset_io import (
     PresetError,
+    copy_preset,
     delete_preset,
     load_parameter_preset,
     rename_preset,
@@ -92,3 +93,12 @@ class PresetIoTests(unittest.TestCase):
             invalid.write_text("x", "utf-8")
             with self.assertRaises(PresetError):
                 delete_preset(invalid, root)
+
+    def test_copy_writes_a_user_owned_preset_without_mutating_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "packaged.json"
+            user = Path(directory) / "user"
+            save_parameter_preset(source, parameter_preset("Packaged"))
+            copied = copy_preset(source, user)
+            self.assertEqual(load_parameter_preset(source)["name"], "Packaged")
+            self.assertEqual(load_parameter_preset(copied)["name"], "Packaged Copy")

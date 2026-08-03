@@ -204,6 +204,19 @@ def delete_preset(path: str | Path, directory: str | Path) -> bool:
     return True
 
 
+def copy_preset(path: str | Path, directory: str | Path, name: str | None = None) -> Path:
+    """Copy a validated (including packaged read-only) preset into user storage."""
+    preset = load_parameter_preset(path)
+    destination = Path(directory).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    display_name = name.strip() if name is not None else f"{preset['name']} Copy"
+    target = _under_directory(destination / sanitize_preset_filename(display_name), destination)
+    if target.exists():
+        raise PresetError("a preset with that name already exists")
+    preset["name"] = display_name
+    return save_parameter_preset(target, preset)
+
+
 def preset_directories(kind: str, create: bool = False) -> tuple[Path, ...]:
     if kind != PRESET_KIND:
         raise PresetError(f"unsupported preset kind: {kind}")

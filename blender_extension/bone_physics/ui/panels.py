@@ -101,6 +101,8 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
                 masked.target = "ALL"
             if preset["read_only"]:
                 row.label(text="Packaged", icon="LOCKED")
+                copy = row.operator("bone_physics.preset_copy", text="Copy", icon="DUPLICATE")
+                copy.filepath = str(preset["path"])
             else:
                 rename = row.operator("bone_physics.preset_rename", text="", icon="GREASEPENCIL")
                 rename.filepath = str(preset["path"])

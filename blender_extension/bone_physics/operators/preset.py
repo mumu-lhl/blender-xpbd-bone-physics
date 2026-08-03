@@ -7,7 +7,7 @@ from pathlib import Path
 import bpy
 
 from ..preset_io import (
-    PRESET_KIND, PresetError, delete_preset, load_parameter_preset, preset_directories,
+    PRESET_KIND, PresetError, copy_preset, delete_preset, load_parameter_preset, preset_directories,
     rename_preset, sanitize_preset_filename, save_parameter_preset,
 )
 from .system import _active_armature
@@ -45,11 +45,24 @@ def _active_system(context: bpy.types.Context):
     return settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
 
 
+def _chain_bone_names(armature: bpy.types.Object, chain: bpy.types.PropertyGroup) -> set[str]:
+    """Return every member of the stored head-to-tail armature chain."""
+    bones = armature.pose.bones
+    tail = bones.get(chain.tail_uuid)
+    names: set[str] = set()
+    while tail is not None:
+        names.add(tail.name)
+        if tail.name == chain.head_uuid:
+            return names
+        tail = tail.parent
+    return set()
+
+
 def _selected_override_names(context: bpy.types.Context, system: bpy.types.PropertyGroup, target: str) -> set[str]:
     if target == "SELECTED_BONES":
         return {bone.name for bone in context.selected_pose_bones or ()}
     chains = system.chains if target == "CHAINS" else (chain for chain in system.chains if chain.selected)
-    return {name for chain in chains for name in (chain.head_uuid, chain.tail_uuid) if name}
+    return {name for chain in chains for name in _chain_bone_names(context.object, chain)}
 
 
 def _system_preset(system: bpy.types.PropertyGroup, name: str) -> dict:
@@ -191,6 +204,35 @@ class BONE_PHYSICS_OT_preset_delete(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BONE_PHYSICS_OT_preset_copy(bpy.types.Operator):
+    bl_idname = "bone_physics.preset_copy"
+    bl_label = "Copy Bone Parameter Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    name: bpy.props.StringProperty(name="Copy Name")
+
+    def invoke(self, context, _event):
+        try:
+            self.name = f"{load_parameter_preset(self.filepath)['name']} Copy"
+        except (OSError, PresetError):
+            self.name = f"{Path(self.filepath).stem} Copy"
+        return context.window_manager.invoke_props_dialog(self, width=420, title="Copy Preset")
+
+    def draw(self, _context):
+        self.layout.label(text=Path(self.filepath).name)
+        self.layout.label(text=self.filepath)
+        self.layout.prop(self, "name")
+
+    def execute(self, _context):
+        try:
+            copy_preset(self.filepath, preset_directories(PRESET_KIND, create=True)[0], self.name)
+        except (OSError, PresetError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class BONE_PHYSICS_OT_preset_rename(bpy.types.Operator):
     bl_idname = "bone_physics.preset_rename"
     bl_label = "Rename Bone Parameter Preset"
@@ -212,4 +254,4 @@ class BONE_PHYSICS_OT_preset_rename(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (BONE_PHYSICS_OT_preset_apply, BONE_PHYSICS_OT_preset_save, BONE_PHYSICS_OT_preset_delete, BONE_PHYSICS_OT_preset_rename)
+CLASSES = (BONE_PHYSICS_OT_preset_apply, BONE_PHYSICS_OT_preset_save, BONE_PHYSICS_OT_preset_delete, BONE_PHYSICS_OT_preset_copy, BONE_PHYSICS_OT_preset_rename)
