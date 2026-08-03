@@ -105,6 +105,7 @@ class ChainProperties(bpy.types.PropertyGroup):
 class PhysicsSystemProperties(bpy.types.PropertyGroup):
     id: bpy.props.StringProperty(name="System ID", update=_system_update)
     stable_id: bpy.props.IntProperty(name="Stable ID", min=0, update=_system_update)
+    name: bpy.props.StringProperty(name="Name", update=_system_update)
     enabled: bpy.props.BoolProperty(name="Enabled", default=True, update=_system_update)
     head: bpy.props.PointerProperty(type=EndpointProperties)
     tail: bpy.props.PointerProperty(type=EndpointProperties)
@@ -117,6 +118,20 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
     next_stable_id: bpy.props.IntProperty(name="Next Stable ID", default=1, min=1, update=_armature_update)
     gravity: bpy.props.FloatVectorProperty(name="Gravity", size=3, default=(0.0, -9.81, 0.0), update=_armature_update)
     fixed_dt: bpy.props.FloatProperty(name="Fixed Time Step", default=1.0 / 120.0, min=0.0, update=_armature_update)
+    global_enabled: bpy.props.BoolProperty(name="Enable Physics", default=True, update=_armature_update)
+    workspace: bpy.props.EnumProperty(
+        name="Workspace",
+        items=(
+            ("SETUP", "Setup", "Configure physics systems and chains."),
+            ("SIMULATE", "Simulate", "Control simulation and baking."),
+            ("DIAGNOSTICS", "Diagnostics", "Inspect validation and runtime information."),
+        ),
+        default="SETUP",
+        update=_armature_update,
+    )
+    active_system_index: bpy.props.IntProperty(
+        name="Active Physics System", default=0, min=0, update=_armature_update
+    )
     physics_systems: bpy.props.CollectionProperty(type=PhysicsSystemProperties)
 
 

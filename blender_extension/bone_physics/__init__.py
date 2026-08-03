@@ -28,15 +28,23 @@ def register() -> None:
     Runtime worlds are attached explicitly by the authoring layer, so importing
     the extension does not mutate the current scene.
     """
+    from .operators import register as register_operators
     from .properties import register_properties
+    from .ui import register as register_ui
 
     register_properties()
+    register_operators()
+    register_ui()
 
 
 def unregister() -> None:
     """Blender extension lifecycle exit point."""
+    from .operators import unregister as unregister_operators
     from .properties import unregister_properties
+    from .ui import unregister as unregister_ui
 
+    unregister_ui()
+    unregister_operators()
     unregister_properties()
 
 
