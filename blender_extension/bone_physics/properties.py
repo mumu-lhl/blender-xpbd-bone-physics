@@ -230,6 +230,9 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
     gravity: bpy.props.FloatVectorProperty(name="Gravity", size=3, default=(0.0, -9.81, 0.0), update=_armature_update)
     fixed_dt: bpy.props.FloatProperty(name="Fixed Time Step", default=1.0 / 120.0, min=0.0, update=_armature_update)
     global_enabled: bpy.props.BoolProperty(name="Enable Physics", default=True, update=_global_enabled_update)
+    show_viewport_overlays: bpy.props.BoolProperty(
+        name="Viewport Overlays", default=False, update=_armature_update
+    )
     workspace: bpy.props.EnumProperty(
         name="Workspace",
         items=(

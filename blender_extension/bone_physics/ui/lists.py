@@ -41,10 +41,21 @@ class BONE_PHYSICS_UL_collision_resources(bpy.types.UIList):
         layout.label(text=item.kind.title())
 
 
+class BONE_PHYSICS_UL_diagnostics(bpy.types.UIList):
+    """Diagnostic entries expose severity and a navigation affordance."""
+
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_property, _index):
+        layout.label(text=item.code, icon={"error": "ERROR", "warning": "ERROR"}.get(item.severity, "INFO"))
+        operator = layout.operator("bone_physics.diagnostic_select", text="", icon="RESTRICT_SELECT_OFF")
+        operator.entity_kind = item.entity_kind
+        operator.entity_id = item.entity_id
+
+
 CLASSES = (
     BONE_PHYSICS_UL_systems,
     BONE_PHYSICS_UL_overrides,
     BONE_PHYSICS_UL_curve_points,
     BONE_PHYSICS_UL_structural_groups,
     BONE_PHYSICS_UL_collision_resources,
+    BONE_PHYSICS_UL_diagnostics,
 )

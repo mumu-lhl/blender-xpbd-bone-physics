@@ -4,7 +4,157 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from typing import Mapping
+from typing import Iterable, Mapping
+
+
+_SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticItem:
+    """A presentation-ready diagnostic with a stable authoring location."""
+
+    code: str
+    severity: str
+    entity_kind: str
+    entity_id: str
+    arguments: tuple[tuple[str, object], ...] = ()
+    stable_id: int = 0
+
+    def __post_init__(self) -> None:
+        if self.severity not in _SEVERITY_ORDER:
+            raise ValueError(f"unsupported diagnostic severity {self.severity!r}")
+        if not self.code or not self.entity_kind or not self.entity_id:
+            raise ValueError("diagnostics require code, entity kind, and entity ID")
+        if isinstance(self.stable_id, bool) or not isinstance(self.stable_id, int) or self.stable_id < 0:
+            raise ValueError("diagnostic stable ID must be a nonnegative integer")
+        object.__setattr__(self, "arguments", tuple(sorted(self.arguments)))
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticOwner:
+    """The authoring entity that owns one native stable ID."""
+
+    entity_kind: str
+    entity_id: str
+    system_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticBindings:
+    """Stable-ID lookup tables retained beside a compiled runtime world."""
+
+    bodies: Mapping[int, DiagnosticOwner] = field(default_factory=dict)
+    constraints: Mapping[int, DiagnosticOwner] = field(default_factory=dict)
+    colliders: Mapping[int, DiagnosticOwner] = field(default_factory=dict)
+    meshes: Mapping[int, DiagnosticOwner] = field(default_factory=dict)
+    regions: Mapping[tuple[int, int], DiagnosticOwner] = field(default_factory=dict)
+
+    def body_owner(self, stable_id: int) -> DiagnosticOwner | None:
+        return self.bodies.get(stable_id)
+
+
+def diagnostic_bindings(config: object) -> DiagnosticBindings:
+    """Build ID-to-authoring ownership without importing Blender or native code."""
+    body_owner: dict[str, DiagnosticOwner] = {}
+    chain_owner: dict[str, DiagnosticOwner] = {}
+    for system in getattr(config, "physics_systems", ()):
+        for chain in getattr(system, "chains", ()):
+            chain_owner[chain.id] = DiagnosticOwner("chain", chain.id, system.id)
+            for bone_uuid in chain.bone_uuids:
+                body_owner[bone_uuid] = DiagnosticOwner("bone", bone_uuid, system.id)
+    assignments = dict(getattr(config, "stable_ids", ()))
+    bodies = {
+        stable_id: body_owner[key.removeprefix("body:")]
+        for key, stable_id in assignments.items()
+        if key.startswith("body:") and key.removeprefix("body:") in body_owner
+    }
+    constraints = {
+        stable_id: body_owner[key.split(":", 1)[1]]
+        for key, stable_id in assignments.items()
+        if key.startswith(("joint:", "angular:", "recovery:"))
+        and key.split(":", 1)[1] in body_owner
+    }
+    colliders = {
+        stable_id: body_owner[key.removeprefix("collider:")]
+        for key, stable_id in assignments.items()
+        if key.startswith("collider:") and key.removeprefix("collider:") in body_owner
+    }
+    meshes = {
+        int(resource.stable_id): DiagnosticOwner("mesh", resource.id)
+        for resource in getattr(config, "collision_resources", ())
+        if resource.__class__.__name__ == "MeshCollisionResource"
+    }
+    return DiagnosticBindings(bodies, constraints, colliders, meshes)
+
+
+def map_runtime_error(config: object, values: Mapping[str, object]) -> DiagnosticItem:
+    """Map one native failure to the most specific known authoring entity.
+
+    Unknown IDs deliberately remain visible as native diagnostics rather than
+    being dropped: a stale world and a stale authoring snapshot are actionable.
+    """
+    lookup = (
+        ("body_id", "bodies", None),
+        ("constraint_id", "constraints", None),
+        ("collider_id", "colliders", None),
+        ("mesh_id", "meshes", None),
+    )
+    owner = None
+    stable_id = 0
+    identifier = "native"
+    if "mesh_id" in values and "region_id" in values:
+        mesh_id, region_id = int(values["mesh_id"]), int(values["region_id"])
+        owner = getattr(config, "regions", {}).get((mesh_id, region_id))
+        stable_id, identifier = region_id, "region_id"
+    if owner is None:
+        for key, collection, _unused in lookup:
+            if key not in values:
+                continue
+            stable_id, identifier = int(values[key]), key
+            if key == "body_id" and hasattr(config, "body_owner"):
+                owner = config.body_owner(stable_id)
+            else:
+                owner = getattr(config, collection, {}).get(stable_id)
+            if owner is not None:
+                break
+    severity = str(values.get("severity", "error")).lower()
+    if severity not in _SEVERITY_ORDER:
+        severity = "error"
+    code = str(values.get("code", f"runtime.{identifier.replace('_id', '')}_failure"))
+    arguments = [(str(key), value) for key, value in values.items()]
+    if owner is None:
+        return DiagnosticItem(code, severity, "runtime", str(stable_id), tuple(arguments), stable_id)
+    if owner.system_id is not None:
+        arguments.append(("system_id", owner.system_id))
+    return DiagnosticItem(code, severity, owner.entity_kind, owner.entity_id, tuple(arguments), stable_id)
+
+
+def authoring_diagnostics(issues: Iterable[object]) -> tuple[DiagnosticItem, ...]:
+    """Adapt presentation-free authoring validation issues without Blender."""
+    result = []
+    for issue in issues:
+        entity_ids = tuple(getattr(issue, "entity_ids", ()))
+        entity_id = entity_ids[0] if entity_ids else "armature"
+        code = str(getattr(issue, "code"))
+        prefix = code.split(".", 1)[0]
+        kind = {"chain": "chain", "resource": "resource", "target": "bone"}.get(prefix, "armature")
+        severity = str(getattr(issue, "severity")).lower().split(".")[-1]
+        result.append(DiagnosticItem(code, severity, kind, entity_id, tuple(getattr(issue, "arguments", ()))) )
+    return merge_diagnostics(result)
+
+
+def merge_diagnostics(*sources: Iterable[DiagnosticItem]) -> tuple[DiagnosticItem, ...]:
+    """Return a deterministic merged view: errors, warnings, then stable IDs."""
+    items = (item for source in sources for item in source)
+    return tuple(sorted(items, key=lambda item: (_SEVERITY_ORDER[item.severity], item.stable_id, item.entity_kind, item.entity_id, item.code)))
+
+
+def diagnostic_counts(items: Iterable[DiagnosticItem]) -> dict[str, int]:
+    counts = {severity: 0 for severity in _SEVERITY_ORDER}
+    for item in items:
+        counts[item.severity] += 1
+    return counts
 
 
 _PHASES = (

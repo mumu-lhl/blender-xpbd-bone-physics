@@ -248,4 +248,35 @@ class BONE_PHYSICS_PT_collision_resources(bpy.types.Panel):
             collision.prop(system, "collision_resource_ids")
 
 
-CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_runtime, BONE_PHYSICS_PT_constraints, BONE_PHYSICS_PT_collision_resources)
+class BONE_PHYSICS_PT_diagnostics(bpy.types.Panel):
+    bl_idname = "BONE_PHYSICS_PT_diagnostics"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bone Physics"
+    bl_label = "Diagnostics"
+    bl_parent_id = "BONE_PHYSICS_PT_root"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return BONE_PHYSICS_PT_root.poll(context)
+
+    def draw(self, context: bpy.types.Context) -> None:
+        settings = context.object.bone_physics
+        layout = self.layout
+        layout.prop(settings, "show_viewport_overlays")
+        # Runtime diagnostics are intentionally optional: validation failures
+        # must remain inspectable even when no native world can be created.
+        items = tuple(getattr(settings, "diagnostic_items", ()))
+        counts = {"error": 0, "warning": 0}
+        for item in items:
+            counts[item.severity] = counts.get(item.severity, 0) + 1
+        layout.label(text=f"Errors: {counts['error']}", icon="ERROR")
+        layout.label(text=f"Warnings: {counts['warning']}", icon="ERROR")
+        if items:
+            layout.template_list("BONE_PHYSICS_UL_diagnostics", "", settings, "diagnostic_items", settings, "active_diagnostic_index")
+        else:
+            layout.label(text="No current diagnostics.", icon="CHECKMARK")
+
+
+CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_runtime, BONE_PHYSICS_PT_constraints, BONE_PHYSICS_PT_collision_resources, BONE_PHYSICS_PT_diagnostics)
