@@ -21,4 +21,17 @@ for name in names:
     assert load_parameter_preset(path)["kind"] == "bone_parameters"
     assert json.loads(path.read_text("utf-8"))["schema_version"] == 1
 
+operator_source = (ROOT / "blender_extension" / "bone_physics" / "operators" / "preset.py").read_text("utf-8")
+panel_source = (ROOT / "blender_extension" / "bone_physics" / "ui" / "panels.py").read_text("utf-8")
+for identifier in (
+    "bone_physics.exact_preset_save",
+    "bone_physics.exact_preset_apply",
+    "bone_physics.exact_preset_delete",
+):
+    assert identifier in operator_source, identifier
+assert "Overwrite Exact Armature Preset" in operator_source
+assert "Delete Exact Armature Preset" in operator_source
+assert "Exact Armature Presets" in panel_source
+assert "EXACT_ARMATURE_PRESET_KIND" in panel_source
+
 print(json.dumps({"status": "ok", "test": "ui_presets"}, sort_keys=True))

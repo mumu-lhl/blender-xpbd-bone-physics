@@ -87,6 +87,16 @@ class PresetIoTests(unittest.TestCase):
         self.assertNotIn("checkpoint", json.dumps(data))
         self.assertEqual(data["armature_fingerprint"], armature_fingerprint(exact_skeleton()))
 
+    def test_malformed_exact_bundle_is_a_preset_error_without_partial_apply(self):
+        target = deepcopy(exact_config())
+        before = json.dumps(target, sort_keys=True)
+        preset = serialize_exact_armature(exact_config(), exact_skeleton())
+        preset["authoring"]["physics_systems"][0]["chains"][0]["bone_uuids"] = 42
+        preset["authoring"]["physics_systems"][0]["id"] = ["unhashable"]
+        with self.assertRaisesRegex(PresetError, "invalid|bone path"):
+            apply_exact_armature(target, preset, exact_skeleton())
+        self.assertEqual(json.dumps(target, sort_keys=True), before)
+
     def test_parameter_preset_round_trip_is_canonical_json(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "soft_hair.json"

@@ -106,14 +106,27 @@ def _exact_snapshot(armature):
     return SimpleNamespace(bones=tuple(bones))
 
 
-def _exact_bundle(settings):
+def _exact_chain_path(armature, chain):
+    current = armature.pose.bones.get(chain.tail_uuid)
+    path = []
+    while current is not None:
+        path.append(current.name)
+        if current.name == chain.head_uuid:
+            return list(reversed(path))
+        current = current.parent
+    raise PresetError(f"chain {chain.id!r} has an invalid bone path")
+
+
+def _exact_bundle(settings, armature=None):
     systems = []
     for system in settings.physics_systems:
         systems.append({**_plain(system, _SYSTEM_FIELDS),
             "head": _plain(system.head, _ENDPOINT_FIELDS), "tail": _plain(system.tail, _ENDPOINT_FIELDS),
             "curve_points": [_plain(item, ("field", "s", "value", "tangent")) for item in system.curve_points],
             "overrides": [{"bone_name": item.bone_name, "parameters": _plain(item.parameters, _ENDPOINT_FIELDS)} for item in system.overrides],
-            "chains": [{**_plain(item, _CHAIN_FIELDS), "curve_points": [_plain(point, ("field", "s", "value", "tangent")) for point in item.curve_points]} for item in system.chains],
+            "chains": [{**_plain(item, _CHAIN_FIELDS),
+                        "bone_uuids": _exact_chain_path(armature, item) if armature is not None else [],
+                        "curve_points": [_plain(point, ("field", "s", "value", "tangent")) for point in item.curve_points]} for item in system.chains],
             "structural_groups": [_plain(item, _STRUCTURAL_FIELDS) for item in system.structural_groups],
         })
     return {"id": settings.id, "next_stable_id": settings.next_stable_id,
@@ -369,7 +382,7 @@ class BONE_PHYSICS_OT_exact_preset_save(bpy.types.Operator):
                     confirm_text="Overwrite", cancel_default=True,
                 )
             save_exact_armature_preset(path, serialize_exact_armature(
-                _exact_bundle(armature.bone_physics), _exact_snapshot(armature), self.name
+                _exact_bundle(armature.bone_physics, armature), _exact_snapshot(armature), self.name
             ))
         except (OSError, PresetError) as error:
             self.report({"ERROR"}, str(error))

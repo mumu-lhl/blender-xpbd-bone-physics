@@ -189,6 +189,36 @@ def _exact_mapping(value: object) -> dict[str, Any]:
 def _validate_authoring_references(authoring: Mapping[str, Any], bones: tuple[dict[str, Any], ...]) -> None:
     known = {item["uuid"] for item in bones}
     stable_ids: set[int] = set()
+    named_ids: dict[str, set[str]] = {"system": set(), "chain": set(), "resource": set()}
+
+    def object_list(value: Any, label: str) -> list[Mapping[str, Any]]:
+        if not isinstance(value, list) or any(not isinstance(item, Mapping) for item in value):
+            raise PresetError(f"exact armature preset {label} must be an array of objects")
+        return value
+
+    def unique_id(value: Mapping[str, Any], label: str) -> None:
+        identifier = value.get("id")
+        if not isinstance(identifier, str) or not identifier:
+            raise PresetError(f"exact armature preset {label} ID is invalid")
+        if identifier in named_ids[label]:
+            raise PresetError(f"exact armature preset {label} IDs must be unique")
+        named_ids[label].add(identifier)
+
+    systems = object_list(authoring.get("physics_systems", []), "physics systems")
+    resources = object_list(authoring.get("collision_resources", []), "collision resources")
+    for system in systems:
+        unique_id(system, "system")
+        chains = object_list(system.get("chains", []), "chains")
+        for chain in chains:
+            unique_id(chain, "chain")
+            path = chain.get("bone_uuids")
+            if not isinstance(path, list) or not path:
+                raise PresetError("exact armature preset bone path must be a non-empty array")
+            if any(not isinstance(item, str) or item not in known for item in path):
+                raise PresetError("exact armature preset references a missing bone path")
+    for resource in resources:
+        unique_id(resource, "resource")
+
     def walk(value: Any, key: str = "") -> None:
         if isinstance(value, Mapping):
             kind = value.get("kind")
@@ -199,7 +229,8 @@ def _validate_authoring_references(authoring: Mapping[str, Any], bones: tuple[di
                 stable_ids.add(stable_id)
             if kind == "MESH" and not isinstance(value.get("object_name"), str):
                 raise PresetError("exact armature preset mesh collider object is invalid")
-            if kind == "ANALYTIC" and value.get("binding") in {"OBJECT", "BONE"} and not value.get("object_name"):
+            binding = value.get("binding")
+            if kind == "ANALYTIC" and isinstance(binding, str) and binding in {"OBJECT", "BONE"} and not value.get("object_name"):
                 raise PresetError("exact armature preset analytic collider object is invalid")
             for region_key in ("excluded_regions", "ignored_body_regions"):
                 if region_key not in value:
@@ -216,9 +247,9 @@ def _validate_authoring_references(authoring: Mapping[str, Any], bones: tuple[di
             if not isinstance(value, str) or value not in known:
                 raise PresetError(f"exact armature preset references missing bone {value!r}")
         elif key in {"bone_uuids", "override_bone_uuids"}:
-            if not all(isinstance(item, str) and item in known for item in value):
+            if not isinstance(value, list) or not all(isinstance(item, str) and item in known for item in value):
                 raise PresetError("exact armature preset references a missing bone path")
-        elif key == "target_id" and value not in {None, ""} and not isinstance(value, str):
+        elif key == "target_id" and value is not None and value != "" and not isinstance(value, str):
             raise PresetError("exact armature preset target is invalid")
     walk(authoring)
 
