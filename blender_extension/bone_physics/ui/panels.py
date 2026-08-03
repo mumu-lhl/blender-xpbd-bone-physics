@@ -110,6 +110,38 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
                     box.prop(override.parameters, field)
 
 
+class BONE_PHYSICS_PT_runtime(bpy.types.Panel):
+    bl_idname = "BONE_PHYSICS_PT_runtime"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bone Physics"
+    bl_label = "Runtime"
+    bl_parent_id = "BONE_PHYSICS_PT_root"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return BONE_PHYSICS_PT_root.poll(context)
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        settings = context.object.bone_physics
+        layout.prop(settings, "global_enabled", text="Enable Physics")
+        row = layout.row(align=True)
+        enable = row.operator("bone_physics.runtime_enable", text="Enable")
+        enable.enabled = True
+        disable = row.operator("bone_physics.runtime_enable", text="Disable")
+        disable.enabled = False
+        row = layout.row(align=True)
+        pause = row.operator("bone_physics.runtime_pause", text="Pause")
+        pause.paused = True
+        resume = row.operator("bone_physics.runtime_pause", text="Resume")
+        resume.paused = False
+        layout.operator("bone_physics.runtime_isolate")
+        layout.operator("bone_physics.runtime_validate_rebuild")
+        layout.operator("bone_physics.runtime_reset")
+
+
 class BONE_PHYSICS_PT_constraints(bpy.types.Panel):
     bl_idname = "BONE_PHYSICS_PT_constraints"
     bl_space_type = "VIEW_3D"
@@ -216,4 +248,4 @@ class BONE_PHYSICS_PT_collision_resources(bpy.types.Panel):
             collision.prop(system, "collision_resource_ids")
 
 
-CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_constraints, BONE_PHYSICS_PT_collision_resources)
+CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_runtime, BONE_PHYSICS_PT_constraints, BONE_PHYSICS_PT_collision_resources)

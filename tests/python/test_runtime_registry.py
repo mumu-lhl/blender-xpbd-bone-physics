@@ -1,0 +1,68 @@
+"""Pure-Python coverage for transactional runtime-world ownership."""
+
+from __future__ import annotations
+
+import unittest
+
+from blender_extension.bone_physics.runtime_registry import RuntimeRegistry
+
+
+class Factory:
+    def __init__(self, handles):
+        self.handles = iter(handles)
+
+    def create(self, scene, armature, spec):
+        del scene, armature, spec
+        value = next(self.handles)
+        if isinstance(value, Exception):
+            raise value
+        return World(value)
+
+
+class World:
+    def __init__(self, handle):
+        self.handle = handle
+        self.destroyed = False
+
+    def destroy(self):
+        self.destroyed = True
+
+
+def valid_spec():
+    return object()
+
+
+def invalid_spec():
+    return object()
+
+
+class RuntimeRegistryTests(unittest.TestCase):
+    def test_failed_rebuild_keeps_previous_valid_world(self):
+        registry = RuntimeRegistry(factory=Factory(handles=[10, ValueError("bad config")]))
+        registry.rebuild(scene_id=1, armature_id=2, spec=valid_spec())
+        with self.assertRaisesRegex(ValueError, "bad config"):
+            registry.rebuild(scene_id=1, armature_id=2, spec=invalid_spec())
+        self.assertEqual(registry.world_by_key((1, 2)).handle, 10)
+
+    def test_replacement_is_created_before_old_world_is_destroyed(self):
+        registry = RuntimeRegistry(factory=Factory(handles=[10, 20]))
+        old = registry.rebuild(scene_id=1, armature_id=2, spec=valid_spec())
+
+        replacement = registry.rebuild(scene_id=1, armature_id=2, spec=valid_spec())
+
+        self.assertEqual(replacement.handle, 20)
+        self.assertTrue(old.destroyed)
+
+    def test_structural_dirty_record_stays_pending_until_validation(self):
+        registry = RuntimeRegistry(factory=Factory(handles=[]))
+        registry.mark_dirty(7, "chains")
+
+        self.assertEqual(registry.flush_dirty(), ())
+        self.assertEqual(registry.pending_structural(7), ("chains",))
+
+        registry.mark_validated(7)
+        self.assertEqual(registry.flush_dirty(), ((7, "chains"),))
+
+
+if __name__ == "__main__":
+    unittest.main()

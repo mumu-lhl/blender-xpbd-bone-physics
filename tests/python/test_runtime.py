@@ -95,6 +95,7 @@ class Bridge:
         self.solve_actions = []
         self.saved_states = []
         self.restored_states = []
+        self.destroyed = []
 
     def prepare(self, handle, action):
         self.events.append(f"prepare:{action.kind.value}")
@@ -129,6 +130,9 @@ class Bridge:
     def pause(self, handle, error):
         self.events.append("pause")
         self.paused.append((handle, error))
+
+    def destroy_world(self, handle):
+        self.destroyed.append(handle)
 
 
 class Writer:
@@ -174,6 +178,14 @@ class RuntimeTests(unittest.TestCase):
         )
         evaluator.runtime = runtime
         return runtime, evaluator, bridge, writer
+
+    def test_destroy_releases_the_native_world_once(self):
+        runtime, _evaluator, bridge, _writer = self.runtime([])
+
+        runtime.destroy()
+        runtime.destroy()
+
+        self.assertEqual(bridge.destroyed, [77])
 
     def test_handler_captures_then_solves_then_writes_exactly_once_under_reentry(self):
         events = []

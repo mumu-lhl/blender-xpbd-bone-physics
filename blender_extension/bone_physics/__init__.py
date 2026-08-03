@@ -34,10 +34,12 @@ def register() -> None:
     from .operators import register as register_operators
     from .properties import register_properties
     from .ui import register as register_ui
+    from .runtime_registry import register_timer
 
     register_properties()
     register_operators()
     register_ui()
+    register_timer()
 
 
 def unregister() -> None:
@@ -45,7 +47,9 @@ def unregister() -> None:
     from .operators import unregister as unregister_operators
     from .properties import unregister_properties
     from .ui import unregister as unregister_ui
+    from .runtime_registry import unregister_timer
 
+    unregister_timer()
     unregister_ui()
     unregister_operators()
     unregister_properties()

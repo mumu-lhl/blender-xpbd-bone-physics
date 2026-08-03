@@ -90,6 +90,7 @@ class RuntimeWorld:
         self.paused = False
         self.last_error: Exception | None = None
         self._last_valid_channels: tuple[object, ...] | None = None
+        self._destroyed = False
 
     def on_frame_change(self, scene, depsgraph) -> RuntimeResult:
         if self.paused:
@@ -229,6 +230,15 @@ class RuntimeWorld:
             resume(self.handle)
         self.paused = False
         self.last_error = None
+
+    def destroy(self) -> None:
+        """Release the native handle exactly once after pose restoration."""
+        if self._destroyed:
+            return
+        destroy = getattr(self.bridge, "destroy_world", None)
+        if destroy is not None:
+            destroy(self.handle)
+        self._destroyed = True
 
 
 class NativeRuntimeBridge:
