@@ -10,6 +10,8 @@ import math
 
 import bpy
 
+from .model import ChainField
+
 
 _CURVE_INTERPOLATION_ITEMS = (
     ("CONSTANT", "Constant", "Hold the preceding value."),
@@ -23,6 +25,7 @@ _ANGULAR_LIMIT_MODE_ITEMS = (
 )
 ENDPOINT_FIELD_ITEMS = (
     ("INVERSE_MASS", "Inverse Mass", "Inverse mass."),
+    ("INERTIA_SCALE", "Inertia Scale", "Local inertia scale vector."),
     ("GRAVITY_SCALE", "Gravity Scale", "Gravity multiplier."),
     ("TRANSLATION_INERTIA", "Translation Inertia", "Translation animation inertia."),
     ("ROTATION_INERTIA", "Rotation Inertia", "Rotation animation inertia."),
@@ -34,10 +37,23 @@ ENDPOINT_FIELD_ITEMS = (
     ("ANGULAR_DAMPING_CONSTRAINT", "Angular Constraint Damping", "Angular constraint damping."),
     ("RECOVERY_COMPLIANCE", "Recovery Compliance", "Animation recovery compliance."),
     ("RECOVERY_DAMPING", "Recovery Damping", "Animation recovery damping."),
+    ("ANGULAR_LIMIT_MODE", "Angular Limit", "Angular limit model."),
+    ("XYZ_LOWER", "XYZ Lower", "Local XYZ lower limits."),
+    ("XYZ_UPPER", "XYZ Upper", "Local XYZ upper limits."),
+    ("SWING_AXIS", "Swing Axis", "Swing cone axis."),
+    ("MAX_SWING", "Maximum Swing", "Maximum swing angle."),
+    ("MIN_TWIST", "Minimum Twist", "Minimum twist angle."),
+    ("MAX_TWIST", "Maximum Twist", "Maximum twist angle."),
     ("RADIUS", "Capsule Radius", "Capsule radius."),
     ("MARGIN", "Collision Margin", "Collision margin."),
+    ("CAPSULE_HEAD_INSET", "Capsule Head Inset", "Capsule head inset."),
+    ("CAPSULE_TAIL_INSET", "Capsule Tail Inset", "Capsule tail inset."),
     ("FRICTION", "Friction", "Contact friction."),
     ("RESTITUTION", "Restitution", "Contact restitution."),
+)
+CURVE_FIELD_ITEMS = tuple(
+    (field.name, field.name.replace("_", " ").title(), "Per-field curve")
+    for field in ChainField
 )
 
 
@@ -77,7 +93,7 @@ def _armature_update(
 
 
 class CurvePointProperties(bpy.types.PropertyGroup):
-    field: bpy.props.EnumProperty(name="Field", items=ENDPOINT_FIELD_ITEMS, default="GRAVITY_SCALE", update=_curve_update)
+    field: bpy.props.EnumProperty(name="Field", items=CURVE_FIELD_ITEMS, default="GRAVITY_SCALE", update=_curve_update)
     s: bpy.props.FloatProperty(name="Position", min=0.0, max=1.0, update=_curve_update)
     value: bpy.props.FloatProperty(name="Value", default=0.0, update=_curve_update)
     tangent: bpy.props.FloatProperty(name="Tangent", default=0.0, update=_curve_update)
@@ -140,6 +156,7 @@ class PhysicsSystemProperties(bpy.types.PropertyGroup):
     show_collision: bpy.props.BoolProperty(name="Collision", default=False)
     show_advanced: bpy.props.BoolProperty(name="Advanced", default=False)
     active_override_index: bpy.props.IntProperty(name="Active Override", default=0, min=0)
+    active_curve_point_index: bpy.props.IntProperty(name="Active Curve Point", default=0, min=0)
     head: bpy.props.PointerProperty(type=EndpointProperties)
     tail: bpy.props.PointerProperty(type=EndpointProperties)
     interpolation: bpy.props.EnumProperty(name="Interpolation", items=_CURVE_INTERPOLATION_ITEMS, default="LINEAR", update=_system_update)

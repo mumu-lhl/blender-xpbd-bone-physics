@@ -10,11 +10,15 @@ from blender_extension.bone_physics.authoring import (
 from blender_extension.bone_physics.authoring_adapter import (
     SkeletonBone,
     compile_authoring,
+    field_curves_from_points,
 )
 from blender_extension.bone_physics.model import AngularLimitMode
 from blender_extension.bone_physics.model import (
     ChainField,
+    ChainFieldCurve,
+    CurvePoint,
     CurveInterpolation,
+    ParameterCurve,
     TargetBinding,
     TargetKind,
 )
@@ -30,6 +34,43 @@ def skeleton():
 
 
 class AuthoringAdapterTests(unittest.TestCase):
+    def test_custom_system_and_chain_hermite_curves_reach_compiler(self):
+        system_curve = ChainFieldCurve(
+            ChainField.GRAVITY_SCALE,
+            ParameterCurve(
+                (CurvePoint(0.0, 1.0, -1.0), CurvePoint(1.0, 0.0, -1.0)),
+                CurveInterpolation.CUBIC_HERMITE,
+            ),
+        )
+        chain_curve = ChainFieldCurve(
+            ChainField.GRAVITY_SCALE,
+            ParameterCurve(
+                (CurvePoint(0.0, 1.0, 0.0), CurvePoint(0.5, 0.8, 2.0), CurvePoint(1.0, 0.0, 0.0)),
+                CurveInterpolation.CUBIC_HERMITE,
+            ),
+        )
+        config = ArmatureAuthoring(
+            id="armature",
+            physics_systems=(PhysicsSystemAuthoring(
+                id="hair", stable_id=10, field_curves=(system_curve,),
+                chains=(ChainAuthoring("hair-chain", 20, ("root", "mid", "tip"), field_curves=(chain_curve,)),),
+            ),),
+        )
+
+        world = compile_authoring(config, skeleton())
+        curve = {item.field: item.curve for item in world.chains[0].field_curves}[ChainField.GRAVITY_SCALE]
+        self.assertEqual(curve, chain_curve.curve)
+        self.assertEqual(curve.points[1].tangent, 2.0)
+
+        class RnaPoint:
+            field = "GRAVITY_SCALE"
+            s = 0.25
+            value = 0.75
+            tangent = -0.5
+
+        converted = field_curves_from_points((RnaPoint(),), "CUBIC_HERMITE")
+        self.assertEqual(converted[0].curve.points[0], CurvePoint(0.25, 0.75, -0.5))
+
     def test_compile_preserves_full_hermite_curves_and_applies_overrides_after_sampling(self):
         config = ArmatureAuthoring(
             id="armature",

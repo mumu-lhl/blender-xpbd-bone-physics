@@ -4,7 +4,7 @@ import uuid
 
 import bpy
 
-from ..properties import ENDPOINT_FIELD_ITEMS
+from ..properties import CURVE_FIELD_ITEMS, ENDPOINT_FIELD_ITEMS
 
 from ..chain_discovery import (
     BoneNode,
@@ -298,6 +298,25 @@ class BONE_PHYSICS_OT_apply_endpoint_value(bpy.types.Operator):
     )
     field: bpy.props.EnumProperty(name="Field", items=ENDPOINT_FIELD_ITEMS)
     value: bpy.props.FloatProperty(name="Value")
+    vector_value: bpy.props.FloatVectorProperty(name="Vector Value", size=3)
+    enum_value: bpy.props.EnumProperty(
+        name="Angular Limit",
+        items=(("FREE", "Free", ""), ("XYZ", "Local XYZ", ""), ("SWING_TWIST", "Swing-Twist", "")),
+    )
+
+    def draw(self, _context: bpy.types.Context) -> None:
+        property_name = self.field.lower()
+        self.layout.prop(self, "endpoint")
+        self.layout.prop(self, "field")
+        self.layout.prop(
+            self,
+            "enum_value" if property_name == "angular_limit_mode" else
+            "vector_value" if property_name in {"inertia_scale", "xyz_lower", "xyz_upper", "swing_axis"} else
+            "value",
+        )
+
+    def invoke(self, context: bpy.types.Context, _event: bpy.types.Event) -> set[str]:
+        return context.window_manager.invoke_props_dialog(self)
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -310,8 +329,15 @@ class BONE_PHYSICS_OT_apply_endpoint_value(bpy.types.Operator):
             self.report({"ERROR"}, "Select at least one physics system")
             return {"CANCELLED"}
         property_name = self.field.lower()
+        applied_value = (
+            self.enum_value
+            if property_name == "angular_limit_mode"
+            else self.vector_value
+            if property_name in {"inertia_scale", "xyz_lower", "xyz_upper", "swing_axis"}
+            else self.value
+        )
         for system in targets:
-            setattr(system.head if self.endpoint == "HEAD" else system.tail, property_name, self.value)
+            setattr(system.head if self.endpoint == "HEAD" else system.tail, property_name, applied_value)
         return {"FINISHED"}
 
 
@@ -320,9 +346,12 @@ class BONE_PHYSICS_OT_curve_point_add(bpy.types.Operator):
     bl_label = "Add Curve Point"
     bl_options = {"REGISTER", "UNDO"}
 
-    field: bpy.props.EnumProperty(name="Field", items=ENDPOINT_FIELD_ITEMS)
+    field: bpy.props.EnumProperty(name="Field", items=CURVE_FIELD_ITEMS)
     position: bpy.props.FloatProperty(name="Position", min=0.0, max=1.0)
     value: bpy.props.FloatProperty(name="Value")
+
+    def invoke(self, context: bpy.types.Context, _event: bpy.types.Event) -> set[str]:
+        return context.window_manager.invoke_props_dialog(self)
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:

@@ -12,7 +12,7 @@ from enum import Enum
 import math
 from typing import Iterable
 
-from .model import AngularLimitMode, CurveInterpolation, TargetBinding
+from .model import AngularLimitMode, ChainFieldCurve, CurveInterpolation, TargetBinding
 
 
 class ValidationSeverity(str, Enum):
@@ -85,11 +85,13 @@ class ChainAuthoring:
     closed: bool = False
     override_bone_uuids: tuple[str, ...] = ()
     overrides: tuple["BoneOverride", ...] = ()
+    field_curves: tuple[ChainFieldCurve, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bone_uuids", tuple(self.bone_uuids))
         object.__setattr__(self, "override_bone_uuids", tuple(self.override_bone_uuids))
         object.__setattr__(self, "overrides", tuple(self.overrides))
+        object.__setattr__(self, "field_curves", tuple(self.field_curves))
         if self.target_binding is not None and not isinstance(self.target_binding, TargetBinding):
             raise ValueError("target binding must be a TargetBinding")
 
@@ -143,9 +145,11 @@ class PhysicsSystemAuthoring:
     tail: EndpointParameters = EndpointParameters()
     collision_policy: CollisionPolicy = CollisionPolicy()
     enabled: bool = True
+    field_curves: tuple[ChainFieldCurve, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "chains", tuple(self.chains))
+        object.__setattr__(self, "field_curves", tuple(self.field_curves))
 
 
 @dataclass(frozen=True, slots=True)

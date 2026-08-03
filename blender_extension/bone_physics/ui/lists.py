@@ -17,4 +17,13 @@ class BONE_PHYSICS_UL_overrides(bpy.types.UIList):
         layout.label(text=item.bone_name)
 
 
-CLASSES = (BONE_PHYSICS_UL_systems, BONE_PHYSICS_UL_overrides)
+class BONE_PHYSICS_UL_curve_points(bpy.types.UIList):
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_property, _index):
+        row = layout.row(align=True)
+        row.prop(item, "field", text="")
+        row.prop(item, "s", text="Position")
+        row.prop(item, "value", text="Value")
+        row.prop(item, "tangent", text="Tangent")
+
+
+CLASSES = (BONE_PHYSICS_UL_systems, BONE_PHYSICS_UL_overrides, BONE_PHYSICS_UL_curve_points)

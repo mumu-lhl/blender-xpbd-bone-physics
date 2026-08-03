@@ -16,11 +16,36 @@ from .model import (
     ChainSpec,
     CollisionSurfaceSpec,
     CurvePoint,
+    CurveInterpolation,
     ParameterCurve,
     TargetBinding,
     TargetKind,
     WorldSpec,
 )
+
+
+def field_curves_from_points(
+    points: Iterable[object], interpolation: CurveInterpolation | str
+) -> tuple[ChainFieldCurve, ...]:
+    """Convert RNA-like curve point records into deterministic immutable curves."""
+    mode = (
+        CurveInterpolation[interpolation]
+        if isinstance(interpolation, str)
+        else CurveInterpolation(interpolation)
+    )
+    grouped: dict[ChainField, list[CurvePoint]] = {}
+    for point in points:
+        field = ChainField[getattr(point, "field")]
+        grouped.setdefault(field, []).append(
+            CurvePoint(float(point.s), float(point.value), float(point.tangent))
+        )
+    return tuple(
+        ChainFieldCurve(
+            field,
+            ParameterCurve(tuple(sorted(grouped[field], key=lambda item: item.s)), mode),
+        )
+        for field in sorted(grouped)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +105,11 @@ def compile_authoring(
                 id=chain_authoring.id,
                 body_ids=tuple(ids[uuid] for uuid in path),
                 closed=chain_authoring.closed,
-                field_curves=_field_curves(system.head, system.tail),
+                field_curves=_field_curves(
+                    system.head,
+                    system.tail,
+                    (*system.field_curves, *chain_authoring.field_curves),
+                ),
                 bone_overrides=tuple(
                     ChainBoneOverride(ids[override.bone_uuid], override.values)
                     for override in _validated_overrides(path, chain_authoring.overrides)
@@ -110,7 +139,11 @@ def _validated_overrides(path: tuple[str, ...], overrides: tuple[BoneOverride, .
     return tuple(sorted(overrides, key=lambda item: item.bone_uuid))
 
 
-def _field_curves(head: EndpointParameters, tail: EndpointParameters) -> tuple[ChainFieldCurve, ...]:
+def _field_curves(
+    head: EndpointParameters,
+    tail: EndpointParameters,
+    custom: tuple[ChainFieldCurve, ...] = (),
+) -> tuple[ChainFieldCurve, ...]:
     fields = (
         (ChainField.INVERSE_MASS, head.inverse_mass, tail.inverse_mass),
         (ChainField.INERTIA_SCALE_X, head.inertia_scale[0], tail.inertia_scale[0]),
@@ -146,13 +179,21 @@ def _field_curves(head: EndpointParameters, tail: EndpointParameters) -> tuple[C
         (ChainField.CAPSULE_HEAD_INSET, head.capsule_head_inset, tail.capsule_head_inset),
         (ChainField.CAPSULE_TAIL_INSET, head.capsule_tail_inset, tail.capsule_tail_inset),
     )
-    return tuple(
+    defaults = {
+        item.field: item
+        for item in (
         ChainFieldCurve(
             field,
             ParameterCurve((CurvePoint(0.0, start), CurvePoint(1.0, end)), head.interpolation),
         )
         for field, start, end in fields
-    )
+        )
+    }
+    for item in custom:
+        if not isinstance(item, ChainFieldCurve):
+            raise ValueError("field curves must use ChainFieldCurve records")
+        defaults[item.field] = item
+    return tuple(defaults[field] for field in ChainField)
 
 
 def _override_values(values: dict[str, object]) -> dict[str, object]:

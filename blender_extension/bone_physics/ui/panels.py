@@ -84,6 +84,15 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
         layout = self.layout
         layout.prop(system, "selected")
         layout.prop(system, "interpolation")
+        layout.operator("bone_physics.apply_endpoint_value", text="Batch Edit Selected Systems")
+        curve_box = layout.box()
+        curve_box.label(text="Per-Field Curves")
+        curve_box.operator("bone_physics.curve_point_add", icon="ADD")
+        if system.curve_points:
+            curve_box.template_list(
+                "BONE_PHYSICS_UL_curve_points", "", system, "curve_points",
+                system, "active_curve_point_index",
+            )
         for group, label in (("show_motion", "Motion"), ("show_recovery", "Recovery"), ("show_angular_limits", "Angular Limits"), ("show_collision", "Collision"), ("show_advanced", "Advanced")):
             layout.prop(system, group, text=label, toggle=True)
             _draw_endpoint_group(layout, system, group)
@@ -92,6 +101,11 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
         box.operator("bone_physics.override_add_selected")
         if system.overrides:
             box.template_list("BONE_PHYSICS_UL_overrides", "", system, "overrides", system, "active_override_index")
+            override = system.overrides[min(system.active_override_index, len(system.overrides) - 1)]
+            box.label(text=f"Override Values: {override.bone_name}")
+            for fields in _GROUP_FIELDS.values():
+                for field in fields:
+                    box.prop(override.parameters, field)
 
 
 CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters)
