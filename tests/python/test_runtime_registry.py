@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from blender_extension.bone_physics.authoring import ValidationIssue, ValidationSeverity
 from blender_extension.bone_physics.runtime_registry import RuntimeRegistry
 
 
@@ -109,6 +110,19 @@ class RuntimeRegistryTests(unittest.TestCase):
         self.assertEqual(settings.diagnostic_items[0].entity_kind, "armature")
         self.assertEqual(settings.diagnostic_items[1].entity_kind, "runtime")
         self.assertTrue(settings.diagnostic_items[1].code.startswith("authoring."))
+
+    def test_injected_validator_issue_is_persisted_on_compile_failure(self):
+        settings = DiagnosticSettings()
+        armature = DiagnosticArmature(2, settings)
+        issue = ValidationIssue("chain.invalid", ValidationSeverity.ERROR, ("hair",))
+        registry = RuntimeRegistry(
+            factory=Factory(handles=[]),
+            spec_builder=lambda _scene, _armature: (_ for _ in ()).throw(ValueError("bad")),
+            validator=lambda _scene, _armature: (issue,),
+        )
+        with self.assertRaises(ValueError):
+            registry.ensure(Pointer(1), armature)
+        self.assertEqual(settings.diagnostic_items[0].code, "chain.invalid")
 
 
 if __name__ == "__main__":

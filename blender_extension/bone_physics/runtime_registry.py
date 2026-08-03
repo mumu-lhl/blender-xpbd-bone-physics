@@ -89,9 +89,11 @@ class RuntimeRegistry:
         *,
         factory: RuntimeWorldFactory | None = None,
         spec_builder: Callable[[object, object], object] | None = None,
+        validator: Callable[[object, object], object] | None = None,
     ) -> None:
         self.factory = factory
         self.spec_builder = spec_builder
+        self.validator = validator
         self._worlds: dict[tuple[int, int], RuntimeEntry] = {}
         self._pending_structural: dict[int, set[str]] = {}
         self._validated: set[int] = set()
@@ -119,12 +121,12 @@ class RuntimeRegistry:
                 # Preserve fresh authoring validation even when compilation
                 # itself fails before a spec exists.
                 _clear_diagnostics(armature)
-                _publish_authoring_diagnostics(scene, armature)
+                _publish_authoring_diagnostics(scene, armature, self.validator)
                 raise
         # Publish fresh authoring issues before native construction so a
         # factory/bridge failure cannot hide the validation result.
         _clear_diagnostics(armature)
-        _publish_authoring_diagnostics(scene, armature)
+        _publish_authoring_diagnostics(scene, armature, self.validator)
         # Create first: a validation/native failure leaves the live world intact.
         replacement = self.factory.create(scene, armature, spec)
         previous = self._worlds.get(key)
@@ -268,16 +270,23 @@ def _clear_runtime_diagnostics(armature: object | None) -> None:
             items.remove(index)
 
 
-def _publish_authoring_diagnostics(scene: object, armature: object) -> None:
-    del scene
+def _publish_authoring_diagnostics(
+    scene: object,
+    armature: object,
+    validator: Callable[[object, object], object] | None = None,
+) -> None:
     settings = getattr(armature, "bone_physics", None)
     items = getattr(settings, "diagnostic_items", None)
     if items is None:
         return
     try:
-        from .authoring_adapter import validate_armature_rna
+        if validator is None:
+            from .authoring_adapter import validate_armature_rna
 
-        diagnostics = authoring_diagnostics(validate_armature_rna(armature))
+            issues = validate_armature_rna(armature)
+        else:
+            issues = validator(scene, armature)
+        diagnostics = authoring_diagnostics(issues)
     except Exception as validation_error:
         # Validator failures are diagnostics too; do not hide them behind the
         # later native/compiler exception.
