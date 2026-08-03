@@ -1,7 +1,9 @@
 # Building
 
 The native extension is built with Rust 1.97.1 and maturin. The supported
-runtime is Blender 5.2.x with Python 3.11-compatible abi3 bindings.
+runtime is Blender 5.2.x, which embeds Python 3.13. The PyO3 bridge uses
+`abi3-py311`, so its `cp311-abi3` wheel is compatible with Blender's Python
+3.13 runtime.
 
 ```bash
 python -m pip install maturin==1.14.1
