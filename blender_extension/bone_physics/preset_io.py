@@ -96,9 +96,9 @@ def _endpoint(value: object, label: str) -> dict[str, Any]:
 def validate_parameter_preset(value: object) -> dict[str, Any]:
     """Return a detached canonical preset, or raise without mutating input."""
     source = _mapping(value, "preset")
-    if source["kind"] != PRESET_KIND:
+    if source.get("kind") != PRESET_KIND:
         raise PresetError("preset kind must be bone_parameters")
-    schema = source["schema_version"]
+    schema = source.get("schema_version")
     if isinstance(schema, bool) or not isinstance(schema, int):
         raise PresetError("schema_version must be an integer")
     if schema > SCHEMA_VERSION:
@@ -183,6 +183,8 @@ def _under_directory(path: str | Path, directory: str | Path) -> Path:
 
 def rename_preset(path: str | Path, name: str, directory: str | Path) -> Path:
     source = _under_directory(path, directory)
+    if source.suffix.lower() != ".json":
+        raise PresetError("preset filename must end in .json")
     target = _under_directory(Path(directory) / sanitize_preset_filename(name), directory)
     if not source.is_file():
         raise PresetError("preset does not exist")
@@ -194,6 +196,8 @@ def rename_preset(path: str | Path, name: str, directory: str | Path) -> Path:
 
 def delete_preset(path: str | Path, directory: str | Path) -> bool:
     target = _under_directory(path, directory)
+    if target.suffix.lower() != ".json":
+        raise PresetError("preset filename must end in .json")
     if not target.is_file():
         raise PresetError("preset does not exist")
     target.unlink()

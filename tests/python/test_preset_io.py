@@ -60,6 +60,13 @@ class PresetIoTests(unittest.TestCase):
                 load_parameter_preset(path)
         self.assertEqual(before, endpoint_parameters())
 
+    def test_malformed_object_is_a_preset_error_not_a_key_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "malformed.json"
+            path.write_text("{}", "utf-8")
+            with self.assertRaises(PresetError):
+                load_parameter_preset(path)
+
     def test_invalid_preset_never_replaces_existing_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "existing.json"
@@ -81,4 +88,7 @@ class PresetIoTests(unittest.TestCase):
             self.assertTrue(delete_preset(renamed, root))
             with self.assertRaises(PresetError):
                 delete_preset(root.parent / "outside.json", root)
-
+            invalid = root / "not-a-preset.txt"
+            invalid.write_text("x", "utf-8")
+            with self.assertRaises(PresetError):
+                delete_preset(invalid, root)

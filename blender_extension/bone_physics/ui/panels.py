@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import bpy
 
+from ..preset_io import PRESET_KIND, list_presets
+
 
 _GROUP_FIELDS = {
     "show_motion": ("inverse_mass", "inertia_scale", "gravity_scale", "translation_inertia", "rotation_inertia", "linear_damping", "angular_damping"),
@@ -83,6 +85,27 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
         system = settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
         layout = self.layout
         layout.prop(system, "selected")
+        preset_box = layout.box()
+        preset_box.label(text="Bone Parameter Presets")
+        preset_box.operator("bone_physics.preset_save", icon="FILE_TICK")
+        for preset in list_presets(PRESET_KIND):
+            row = preset_box.row(align=True)
+            apply = row.operator("bone_physics.preset_apply", text=preset["name"], icon="IMPORT")
+            apply.filepath = str(preset["path"])
+            apply.mask = "ALL"
+            apply.target = "ALL"
+            for mask, label in (("MOTION", "Motion"), ("LOCAL_CONSTRAINT", "Local Constraint"), ("COLLISION", "Collision")):
+                masked = row.operator("bone_physics.preset_apply", text=label)
+                masked.filepath = str(preset["path"])
+                masked.mask = mask
+                masked.target = "ALL"
+            if preset["read_only"]:
+                row.label(text="Packaged", icon="LOCKED")
+            else:
+                rename = row.operator("bone_physics.preset_rename", text="", icon="GREASEPENCIL")
+                rename.filepath = str(preset["path"])
+                delete = row.operator("bone_physics.preset_delete", text="", icon="REMOVE")
+                delete.filepath = str(preset["path"])
         layout.prop(system, "interpolation")
         layout.operator("bone_physics.apply_endpoint_value", text="Batch Edit Selected Systems")
         curve_box = layout.box()
