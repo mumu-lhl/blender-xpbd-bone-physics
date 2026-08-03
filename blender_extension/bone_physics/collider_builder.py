@@ -5,7 +5,7 @@ from __future__ import annotations
 from array import array
 from collections.abc import Iterable
 
-from .model import AnalyticColliderSpec, AnalyticShape, BoneSpec
+from .model import AnalyticColliderSpec, AnalyticShape, BoneSpec, CollisionSurfaceSpec
 
 ANALYTIC_COLLIDER_COLUMNS = 17
 
@@ -59,4 +59,14 @@ def compile_analytic_colliders(
         "enabled": array("I", (int(collider.enabled) for collider in ordered)),
         "values": values,
         "columns": ANALYTIC_COLLIDER_COLUMNS,
+    }
+
+
+def compile_collision_resource_ids(
+    colliders: Iterable[AnalyticColliderSpec], surfaces: Iterable[CollisionSurfaceSpec]
+) -> dict[str, array]:
+    """Return stable native-facing IDs for both reusable collision resource kinds."""
+    return {
+        "analytic_ids": array("I", sorted(item.id for item in colliders)),
+        "mesh_ids": array("I", sorted(item.id for item in surfaces)),
     }
