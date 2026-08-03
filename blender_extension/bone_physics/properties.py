@@ -21,6 +21,24 @@ _ANGULAR_LIMIT_MODE_ITEMS = (
     ("XYZ", "Local XYZ", "Constrain local XYZ rotation."),
     ("SWING_TWIST", "Swing-Twist", "Constrain swing and twist."),
 )
+ENDPOINT_FIELD_ITEMS = (
+    ("INVERSE_MASS", "Inverse Mass", "Inverse mass."),
+    ("GRAVITY_SCALE", "Gravity Scale", "Gravity multiplier."),
+    ("TRANSLATION_INERTIA", "Translation Inertia", "Translation animation inertia."),
+    ("ROTATION_INERTIA", "Rotation Inertia", "Rotation animation inertia."),
+    ("LINEAR_DAMPING", "Linear Damping", "Linear damping."),
+    ("ANGULAR_DAMPING", "Angular Damping", "Angular damping."),
+    ("JOINT_COMPLIANCE", "Joint Compliance", "Parent joint compliance."),
+    ("JOINT_DAMPING", "Joint Damping", "Parent joint damping."),
+    ("ANGULAR_COMPLIANCE", "Angular Compliance", "Angular constraint compliance."),
+    ("ANGULAR_DAMPING_CONSTRAINT", "Angular Constraint Damping", "Angular constraint damping."),
+    ("RECOVERY_COMPLIANCE", "Recovery Compliance", "Animation recovery compliance."),
+    ("RECOVERY_DAMPING", "Recovery Damping", "Animation recovery damping."),
+    ("RADIUS", "Capsule Radius", "Capsule radius."),
+    ("MARGIN", "Collision Margin", "Collision margin."),
+    ("FRICTION", "Friction", "Contact friction."),
+    ("RESTITUTION", "Restitution", "Contact restitution."),
+)
 
 
 def _mark_dirty(properties: bpy.types.PropertyGroup, category: str) -> None:
@@ -59,6 +77,7 @@ def _armature_update(
 
 
 class CurvePointProperties(bpy.types.PropertyGroup):
+    field: bpy.props.EnumProperty(name="Field", items=ENDPOINT_FIELD_ITEMS, default="GRAVITY_SCALE", update=_curve_update)
     s: bpy.props.FloatProperty(name="Position", min=0.0, max=1.0, update=_curve_update)
     value: bpy.props.FloatProperty(name="Value", default=0.0, update=_curve_update)
     tangent: bpy.props.FloatProperty(name="Tangent", default=0.0, update=_curve_update)
@@ -74,6 +93,8 @@ class EndpointProperties(bpy.types.PropertyGroup):
     angular_damping: bpy.props.FloatProperty(name="Angular Damping", default=0.0, min=0.0, update=_endpoint_update)
     joint_compliance: bpy.props.FloatProperty(name="Joint Compliance", default=0.0, min=0.0, update=_endpoint_update)
     joint_damping: bpy.props.FloatProperty(name="Joint Damping", default=0.0, min=0.0, update=_endpoint_update)
+    angular_compliance: bpy.props.FloatProperty(name="Angular Compliance", default=0.0, min=0.0, update=_endpoint_update)
+    angular_damping_constraint: bpy.props.FloatProperty(name="Angular Constraint Damping", default=0.0, min=0.0, update=_endpoint_update)
     recovery_compliance: bpy.props.FloatProperty(name="Recovery Compliance", default=0.0, min=0.0, update=_endpoint_update)
     recovery_damping: bpy.props.FloatProperty(name="Recovery Damping", default=0.0, min=0.0, update=_endpoint_update)
     angular_limit_mode: bpy.props.EnumProperty(name="Angular Limit", items=_ANGULAR_LIMIT_MODE_ITEMS, default="FREE", update=_endpoint_update)
@@ -92,6 +113,11 @@ class EndpointProperties(bpy.types.PropertyGroup):
     interpolation: bpy.props.EnumProperty(name="Interpolation", items=_CURVE_INTERPOLATION_ITEMS, default="LINEAR", update=_endpoint_update)
 
 
+class BoneOverrideProperties(bpy.types.PropertyGroup):
+    bone_name: bpy.props.StringProperty(name="Bone", update=_system_update)
+    parameters: bpy.props.PointerProperty(type=EndpointProperties)
+
+
 class ChainProperties(bpy.types.PropertyGroup):
     id: bpy.props.StringProperty(name="Chain ID", update=_chain_update)
     stable_id: bpy.props.IntProperty(name="Stable ID", min=0, max=0x7FFFFFFF, update=_chain_update)
@@ -107,8 +133,18 @@ class PhysicsSystemProperties(bpy.types.PropertyGroup):
     stable_id: bpy.props.IntProperty(name="Stable ID", min=0, max=0x7FFFFFFF, update=_system_update)
     name: bpy.props.StringProperty(name="Name", update=_system_update)
     enabled: bpy.props.BoolProperty(name="Enabled", default=True, update=_system_update)
+    selected: bpy.props.BoolProperty(name="Selected", default=False, update=_system_update)
+    show_motion: bpy.props.BoolProperty(name="Motion", default=False)
+    show_recovery: bpy.props.BoolProperty(name="Recovery", default=False)
+    show_angular_limits: bpy.props.BoolProperty(name="Angular Limits", default=False)
+    show_collision: bpy.props.BoolProperty(name="Collision", default=False)
+    show_advanced: bpy.props.BoolProperty(name="Advanced", default=False)
+    active_override_index: bpy.props.IntProperty(name="Active Override", default=0, min=0)
     head: bpy.props.PointerProperty(type=EndpointProperties)
     tail: bpy.props.PointerProperty(type=EndpointProperties)
+    interpolation: bpy.props.EnumProperty(name="Interpolation", items=_CURVE_INTERPOLATION_ITEMS, default="LINEAR", update=_system_update)
+    curve_points: bpy.props.CollectionProperty(type=CurvePointProperties)
+    overrides: bpy.props.CollectionProperty(type=BoneOverrideProperties)
     chains: bpy.props.CollectionProperty(type=ChainProperties)
 
 
@@ -138,6 +174,7 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
 CLASSES = (
     CurvePointProperties,
     EndpointProperties,
+    BoneOverrideProperties,
     ChainProperties,
     PhysicsSystemProperties,
     ArmaturePhysicsProperties,

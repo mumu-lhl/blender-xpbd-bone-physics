@@ -12,4 +12,9 @@ class BONE_PHYSICS_UL_systems(bpy.types.UIList):
         layout.label(text=f"{len(item.chains)} chains")
 
 
-CLASSES = (BONE_PHYSICS_UL_systems,)
+class BONE_PHYSICS_UL_overrides(bpy.types.UIList):
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_property, _index):
+        layout.label(text=item.bone_name)
+
+
+CLASSES = (BONE_PHYSICS_UL_systems, BONE_PHYSICS_UL_overrides)
