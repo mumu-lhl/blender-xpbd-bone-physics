@@ -13,6 +13,7 @@ import math
 from typing import Iterable
 
 from .model import (
+    AnalyticShape,
     AngularLimitMode,
     ChainFieldCurve,
     CrossLinkSpec,
@@ -133,6 +134,7 @@ class CollisionPolicy:
     rigid_constraint_edges: tuple[tuple[str, str], ...] = ()
     compliant_constraint_edges: tuple[tuple[str, str], ...] = ()
     suspicious_weight_bone_uuids: tuple[str, ...] = ()
+    explicit_excluded_bone_uuids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "resource_ids", tuple(self.resource_ids))
@@ -140,6 +142,65 @@ class CollisionPolicy:
         object.__setattr__(self, "rigid_constraint_edges", tuple(tuple(edge) for edge in self.rigid_constraint_edges))
         object.__setattr__(self, "compliant_constraint_edges", tuple(tuple(edge) for edge in self.compliant_constraint_edges))
         object.__setattr__(self, "suspicious_weight_bone_uuids", tuple(self.suspicious_weight_bone_uuids))
+        object.__setattr__(self, "explicit_excluded_bone_uuids", tuple(self.explicit_excluded_bone_uuids))
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticCollisionResource:
+    """A reusable kinematic analytic collider, identified independently of a body."""
+
+    id: str
+    stable_id: int
+    shape: AnalyticShape = AnalyticShape.SPHERE
+    binding: str = "WORLD"
+    object_name: str | None = None
+    bone_name: str | None = None
+    translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    radius: float = 0.1
+    local_a: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    local_b: tuple[float, float, float] = (0.0, 1.0, 0.0)
+    half_extents: tuple[float, float, float] = (0.1, 0.1, 0.1)
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "shape", AnalyticShape(self.shape))
+        object.__setattr__(self, "binding", str(self.binding).upper())
+        for name in ("translation", "rotation", "local_a", "local_b", "half_extents"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+
+
+@dataclass(frozen=True, slots=True)
+class MeshCollisionResource:
+    """A pre-physics deforming mesh collision resource."""
+
+    id: str
+    stable_id: int
+    object_name: str
+    thickness: float = 0.0
+    simplification: float = 0.0
+    excluded_materials: tuple[str, ...] = ()
+    excluded_regions: tuple[int, ...] = ()
+    ignored_body_regions: tuple[int, ...] = ()
+    weight_merges: tuple[tuple[str, str], ...] = ()
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "excluded_materials", tuple(self.excluded_materials))
+        object.__setattr__(self, "excluded_regions", tuple(self.excluded_regions))
+        object.__setattr__(self, "ignored_body_regions", tuple(self.ignored_body_regions))
+        object.__setattr__(self, "weight_merges", tuple(tuple(item) for item in self.weight_merges))
+
+
+@dataclass(frozen=True, slots=True)
+class CollisionCollectionAuthoring:
+    id: str
+    stable_id: int
+    resource_ids: tuple[str, ...]
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "resource_ids", tuple(self.resource_ids))
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +226,7 @@ class ArmatureAuthoring:
     id: str
     physics_systems: tuple[PhysicsSystemAuthoring, ...] = ()
     resource_ids: tuple[str, ...] = ()
+    collision_resources: tuple[AnalyticCollisionResource | MeshCollisionResource | CollisionCollectionAuthoring, ...] = ()
     target_ids: tuple[str, ...] = ()
     stable_ids: tuple[tuple[str, int], ...] = ()
     next_stable_id: int = 1
@@ -174,6 +236,7 @@ class ArmatureAuthoring:
     def __post_init__(self) -> None:
         object.__setattr__(self, "physics_systems", tuple(self.physics_systems))
         object.__setattr__(self, "resource_ids", tuple(self.resource_ids))
+        object.__setattr__(self, "collision_resources", tuple(self.collision_resources))
         object.__setattr__(self, "target_ids", tuple(self.target_ids))
         object.__setattr__(self, "stable_ids", tuple((key, value) for key, value in self.stable_ids))
         object.__setattr__(self, "gravity", tuple(self.gravity))
@@ -272,6 +335,34 @@ def validate_authoring(config: ArmatureAuthoring) -> tuple[ValidationIssue, ...]
     issues.extend(_collision_issues(config))
     issues.extend(_scalar_issues(config))
     return tuple(sorted(issues, key=lambda issue: (issue.severity.value, issue.code, issue.entity_ids)))
+
+
+def compile_collision_matrix(
+    systems: Iterable[PhysicsSystemAuthoring],
+) -> dict[str, tuple[int, int]]:
+    """Compile stable, system-wide collision layers and masks.
+
+    A request from either side enables a cross-system pair on both sides.  This
+    makes authoring order irrelevant and prevents a one-sided contact policy.
+    """
+    ordered = tuple(sorted((item for item in systems if item.enabled), key=lambda item: item.stable_id))
+    if len(ordered) > 32:
+        raise ValueError("physics systems exceed 32 collision layers")
+    if len({item.id for item in ordered}) != len(ordered):
+        raise ValueError("physics system IDs must be unique for collision compilation")
+    layers = {item.id: 1 << index for index, item in enumerate(ordered)}
+    result: dict[str, tuple[int, int]] = {}
+    for system in ordered:
+        requested = set(system.collision_policy.collide_with_system_ids)
+        mask = layers[system.id] if system.collision_policy.self_collision else 0
+        for other in ordered:
+            if other.id == system.id:
+                continue
+            other_requested = set(other.collision_policy.collide_with_system_ids)
+            if other.id in requested or system.id in other_requested:
+                mask |= layers[other.id]
+        result[system.id] = (layers[system.id], mask)
+    return result
 
 
 def _identity_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:

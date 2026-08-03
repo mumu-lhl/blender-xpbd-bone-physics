@@ -154,4 +154,55 @@ class BONE_PHYSICS_PT_constraints(bpy.types.Panel):
         inspector.label(text="Current error: rebuild required")
 
 
-CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_constraints)
+class BONE_PHYSICS_PT_collision_resources(bpy.types.Panel):
+    bl_idname = "BONE_PHYSICS_PT_collision_resources"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bone Physics"
+    bl_label = "Collision Resources"
+    bl_parent_id = "BONE_PHYSICS_PT_root"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return BONE_PHYSICS_PT_root.poll(context)
+
+    def draw(self, context: bpy.types.Context) -> None:
+        settings = context.object.bone_physics
+        layout = self.layout
+        row = layout.row()
+        row.template_list("BONE_PHYSICS_UL_collision_resources", "", settings,
+                          "collision_resources", settings, "active_collision_resource_index")
+        actions = row.column(align=True)
+        actions.operator("bone_physics.collision_resource_add", text="", icon="ADD")
+        actions.operator("bone_physics.collision_resource_duplicate", text="", icon="DUPLICATE")
+        actions.operator("bone_physics.collision_resource_remove", text="", icon="REMOVE")
+        if not settings.collision_resources:
+            return
+        resource = settings.collision_resources[min(settings.active_collision_resource_index, len(settings.collision_resources) - 1)]
+        layout.prop(resource, "kind")
+        layout.prop(resource, "enabled")
+        if resource.kind == "ANALYTIC":
+            layout.prop(resource, "shape")
+            layout.prop(resource, "binding")
+            layout.prop(resource, "object_name")
+            if resource.binding == "BONE":
+                layout.prop(resource, "bone_name")
+            layout.prop(resource, "radius")
+        elif resource.kind == "MESH":
+            for name in ("object_name", "thickness", "simplification", "excluded_materials", "excluded_regions", "ignored_body_regions", "weight_merges"):
+                layout.prop(resource, name)
+        else:
+            layout.prop(resource, "member_ids")
+        if settings.physics_systems:
+            layout.operator("bone_physics.collision_resource_assign")
+            system = settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
+            collision = layout.box()
+            collision.label(text="System Collision Policy")
+            collision.prop(system, "self_collision")
+            collision.prop(system, "cross_chain_collision")
+            collision.prop(system, "collide_with_system_ids")
+            collision.prop(system, "collision_resource_ids")
+
+
+CLASSES = (BONE_PHYSICS_PT_root, BONE_PHYSICS_PT_parameters, BONE_PHYSICS_PT_constraints, BONE_PHYSICS_PT_collision_resources)

@@ -7,10 +7,15 @@ import math
 from typing import Iterable
 
 from .authoring import (
+    AnalyticCollisionResource,
     ArmatureAuthoring,
     BoneOverride,
     ChainAuthoring,
+    CollisionCollectionAuthoring,
+    CollisionPolicy,
+    compile_collision_matrix,
     EndpointParameters,
+    MeshCollisionResource,
     PhysicsSystemAuthoring,
     StableIdAllocator,
 )
@@ -99,6 +104,12 @@ def physics_system_from_rna(
         head=head,
         tail=tail,
         enabled=system.enabled,
+        collision_policy=CollisionPolicy(
+            resource_ids=_csv(getattr(system, "collision_resource_ids", "")),
+            collide_with_system_ids=_csv(getattr(system, "collide_with_system_ids", "")),
+            self_collision=bool(getattr(system, "self_collision", True)),
+            cross_chain_collision=bool(getattr(system, "cross_chain_collision", True)),
+        ),
         field_curves=system_curves,
         cross_links=tuple(
             CrossLinkSpec(
@@ -113,6 +124,35 @@ def physics_system_from_rna(
             for group in getattr(system, "structural_groups", ())
         ),
     )
+
+
+def collision_resources_from_rna(resources: Iterable[object]):
+    """Snapshot RNA collision resources, preserving their persisted stable IDs."""
+    result = []
+    for item in resources:
+        kind = getattr(item, "kind")
+        if kind == "ANALYTIC":
+            result.append(AnalyticCollisionResource(
+                id=item.id, stable_id=int(item.stable_id), shape=getattr(item, "shape"),
+                binding=getattr(item, "binding"), object_name=getattr(item, "object_name") or None,
+                bone_name=getattr(item, "bone_name") or None, radius=float(getattr(item, "radius")),
+            ))
+        elif kind == "MESH":
+            result.append(MeshCollisionResource(
+                id=item.id, stable_id=int(item.stable_id), object_name=item.object_name,
+                thickness=float(item.thickness), simplification=float(item.simplification),
+                excluded_materials=_csv(item.excluded_materials),
+                excluded_regions=tuple(int(value) for value in _csv(item.excluded_regions)),
+                ignored_body_regions=tuple(int(value) for value in _csv(item.ignored_body_regions)),
+                weight_merges=tuple(tuple(part.strip() for part in value.split(":", 1)) for value in _csv(item.weight_merges)),
+            ))
+        else:
+            result.append(CollisionCollectionAuthoring(item.id, int(item.stable_id), _csv(item.member_ids), item.enabled))
+    return tuple(sorted(result, key=lambda item: item.stable_id))
+
+
+def _csv(value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
 def _structural_chain_ids(value: str) -> tuple[str, ...]:
@@ -183,7 +223,9 @@ def compile_authoring(
                     str(cross_link.first_constraint_id + offset),
                     cross_link.first_constraint_id + offset,
                 )
+    matrix = compile_collision_matrix(config.physics_systems)
     bones: list[BoneSpec] = []
+    bone_system: dict[int, PhysicsSystemAuthoring] = {}
     chains: list[ChainSpec] = []
     cross_links: list[CrossLinkSpec] = []
     claimed: set[str] = set()
@@ -200,7 +242,8 @@ def compile_authoring(
                 node = nodes[uuid]
                 parent_id = ids.get(node.parent_uuid)
                 binding = _binding(chain_authoring.target_binding, chain_authoring.target_id, node, index, nodes)
-                bones.append(BoneSpec(
+                layer, mask = matrix[system.id]
+                bone = BoneSpec(
                     id=ids[uuid], name=node.name, parent_id=parent_id,
                     joint_constraint_id=allocator.allocate("joint", uuid) if parent_id is not None else None,
                     angular_constraint_id=allocator.allocate("angular", uuid) if parent_id is not None else None,
@@ -208,7 +251,10 @@ def compile_authoring(
                     rest_translation=node.head, local_head=(0.0, 0.0, 0.0),
                     local_tail=(0.0, _length(node), 0.0), rest_rotation=node.rest_rotation,
                     target_binding=binding, angular_limit_mode=system.head.angular_limit_mode,
-                ))
+                    collision_layer=layer, collision_mask=mask,
+                )
+                bones.append(bone)
+                bone_system[bone.id] = system
             chains.append(ChainSpec(
                 id=chain_authoring.id,
                 body_ids=tuple(ids[uuid] for uuid in path),
@@ -224,8 +270,8 @@ def compile_authoring(
                 ),
             ))
         cross_links.extend(system.cross_links)
-    analytic = tuple(item for item in collision_snapshot if isinstance(item, AnalyticColliderSpec))
-    surfaces = tuple(item for item in collision_snapshot if isinstance(item, CollisionSurfaceSpec))
+    bones = _compile_body_collision_filters(bones, bone_system)
+    analytic, surfaces = _collision_resources(config, collision_snapshot)
     return WorldSpec(
         bones=tuple(sorted(bones, key=lambda item: item.id)),
         chains=tuple(sorted(chains, key=lambda item: item.id)),
@@ -233,6 +279,74 @@ def compile_authoring(
         analytic_colliders=tuple(sorted(analytic, key=lambda item: item.id)),
         collision_surfaces=tuple(sorted(surfaces, key=lambda item: item.id)),
         gravity=config.gravity, fixed_dt=config.fixed_dt,
+    )
+
+
+def _compile_body_collision_filters(
+    bones: list[BoneSpec], systems: dict[int, PhysicsSystemAuthoring]
+) -> list[BoneSpec]:
+    """Apply direct parent and explicit authoring exclusions after system masks."""
+    from dataclasses import replace
+
+    by_name = {bone.name: bone.id for bone in bones}
+    result = []
+    for bone in bones:
+        policy = systems[bone.id].collision_policy
+        excluded = set(policy.explicit_excluded_bone_uuids)
+        body_ids = {by_name[name] for name in excluded if name in by_name}
+        if bone.parent_id is not None:
+            body_ids.add(bone.parent_id)
+        constraint_ids = () if bone.joint_constraint_id is None else (bone.joint_constraint_id,)
+        result.append(replace(
+            bone,
+            excluded_body_ids=tuple(sorted(body_ids)),
+            excluded_constraint_ids=constraint_ids,
+        ))
+    return result
+
+
+def _collision_resources(
+    config: ArmatureAuthoring,
+    snapshot: Iterable[AnalyticColliderSpec | CollisionSurfaceSpec],
+) -> tuple[tuple[AnalyticColliderSpec, ...], tuple[CollisionSurfaceSpec, ...]]:
+    """Resolve selected reusable resources without leaking geometry backend types."""
+    raw = tuple(snapshot)
+    resources = {item.id: item for item in config.collision_resources}
+    wanted = {
+        resource_id
+        for system in config.physics_systems if system.enabled
+        for resource_id in system.collision_policy.resource_ids
+    }
+    expanded: set[str] = set()
+    for resource_id in wanted:
+        resource = resources.get(resource_id)
+        if isinstance(resource, CollisionCollectionAuthoring):
+            expanded.update(resource.resource_ids)
+        else:
+            expanded.add(resource_id)
+    analytic = [item for item in raw if isinstance(item, AnalyticColliderSpec)]
+    surfaces = [item for item in raw if isinstance(item, CollisionSurfaceSpec)]
+    for resource_id in sorted(expanded):
+        resource = resources.get(resource_id)
+        if isinstance(resource, AnalyticCollisionResource) and resource.enabled:
+            analytic.append(AnalyticColliderSpec(
+                id=resource.stable_id, shape=resource.shape, translation=resource.translation,
+                rotation=resource.rotation, radius=resource.radius, local_a=resource.local_a,
+                local_b=resource.local_b, half_extents=resource.half_extents,
+                enabled=True, source_object=resource.object_name,
+            ))
+        elif isinstance(resource, MeshCollisionResource) and resource.enabled:
+            surfaces.append(CollisionSurfaceSpec(
+                id=resource.stable_id, object_name=resource.object_name,
+                excluded_materials=resource.excluded_materials,
+                excluded_region_ids=resource.excluded_regions,
+                body_region_ignores=tuple((body_id, resource.ignored_body_regions) for body_id in ()),
+                upstream_weight_merges=resource.weight_merges, thickness=resource.thickness,
+                simplify_max_error=resource.simplification,
+            ))
+    return (
+        tuple(sorted({item.id: item for item in analytic}.values(), key=lambda item: item.id)),
+        tuple(sorted({item.id: item for item in surfaces}.values(), key=lambda item: item.id)),
     )
 
 

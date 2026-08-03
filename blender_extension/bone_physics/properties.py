@@ -90,6 +90,10 @@ def _system_update(properties: bpy.types.PropertyGroup, _context: bpy.types.Cont
     _mark_dirty(properties, "systems")
 
 
+def _collision_update(properties: bpy.types.PropertyGroup, _context: bpy.types.Context) -> None:
+    _mark_dirty(properties, "collisions")
+
+
 def _armature_update(
     properties: bpy.types.PropertyGroup, _context: bpy.types.Context
 ) -> None:
@@ -182,6 +186,30 @@ class PhysicsSystemProperties(bpy.types.PropertyGroup):
     overrides: bpy.props.CollectionProperty(type=BoneOverrideProperties)
     chains: bpy.props.CollectionProperty(type=ChainProperties)
     structural_groups: bpy.props.CollectionProperty(type=StructuralGroupProperties)
+    collision_resource_ids: bpy.props.StringProperty(name="Collision Resources", update=_collision_update)
+    collide_with_system_ids: bpy.props.StringProperty(name="Collide With Systems", update=_collision_update)
+    self_collision: bpy.props.BoolProperty(name="Self Collision", default=True, update=_collision_update)
+    cross_chain_collision: bpy.props.BoolProperty(name="Cross-Chain Collision", default=True, update=_collision_update)
+
+
+class CollisionResourceProperties(bpy.types.PropertyGroup):
+    id: bpy.props.StringProperty(name="Resource ID", update=_collision_update)
+    stable_id: bpy.props.IntProperty(name="Stable ID", min=1, max=0x7FFFFFFF, update=_collision_update)
+    name: bpy.props.StringProperty(name="Name", update=_collision_update)
+    enabled: bpy.props.BoolProperty(name="Enabled", default=True, update=_collision_update)
+    kind: bpy.props.EnumProperty(name="Kind", items=(("ANALYTIC", "Analytic", "Sphere, capsule, or rounded box."), ("MESH", "Mesh", "Pre-physics deforming collision mesh."), ("COLLECTION", "Collection", "Reusable group of collision resources.")), default="ANALYTIC", update=_collision_update)
+    shape: bpy.props.EnumProperty(name="Shape", items=(("SPHERE", "Sphere", ""), ("CAPSULE", "Capsule", ""), ("ROUNDED_BOX", "Rounded Box", "")), default="SPHERE", update=_collision_update)
+    binding: bpy.props.EnumProperty(name="Bind To", items=(("WORLD", "World", ""), ("OBJECT", "Object", ""), ("BONE", "Bone", "")), default="WORLD", update=_collision_update)
+    object_name: bpy.props.StringProperty(name="Object", update=_collision_update)
+    bone_name: bpy.props.StringProperty(name="Bone", update=_collision_update)
+    radius: bpy.props.FloatProperty(name="Radius", default=0.1, min=0.0, update=_collision_update)
+    thickness: bpy.props.FloatProperty(name="Thickness", default=0.0, min=0.0, update=_collision_update)
+    simplification: bpy.props.FloatProperty(name="Simplification", default=0.0, min=0.0, update=_collision_update)
+    excluded_materials: bpy.props.StringProperty(name="Excluded Materials", update=_collision_update)
+    excluded_regions: bpy.props.StringProperty(name="Excluded Regions", update=_collision_update)
+    ignored_body_regions: bpy.props.StringProperty(name="Body Region Ignores", update=_collision_update)
+    weight_merges: bpy.props.StringProperty(name="Weight Merges", update=_collision_update)
+    member_ids: bpy.props.StringProperty(name="Members", update=_collision_update)
 
 
 class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
@@ -205,6 +233,8 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
         name="Active Physics System", default=0, min=0, update=_armature_update
     )
     physics_systems: bpy.props.CollectionProperty(type=PhysicsSystemProperties)
+    collision_resources: bpy.props.CollectionProperty(type=CollisionResourceProperties)
+    active_collision_resource_index: bpy.props.IntProperty(name="Active Collision Resource", min=0, update=_collision_update)
 
 
 CLASSES = (
@@ -213,6 +243,7 @@ CLASSES = (
     BoneOverrideProperties,
     ChainProperties,
     StructuralGroupProperties,
+    CollisionResourceProperties,
     PhysicsSystemProperties,
     ArmaturePhysicsProperties,
 )
