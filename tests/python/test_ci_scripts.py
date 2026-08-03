@@ -67,6 +67,7 @@ class BlenderRunnerTests(unittest.TestCase):
                 "test_pose_roundtrip.py",
                 "test_runtime_handler.py",
                 "test_ui_registration.py",
+                "test_ui_character_workflows.py",
             ),
         )
 
