@@ -7,6 +7,10 @@ Status: 2026-08-02 (Asia/Shanghai)
 - Branch: `feat/v1-complete`.
 - V1 implementation work is complete in this branch; no GitHub Release was
   created.
+- UI Tasks 1-15 are complete locally. Task 15 adds installed-extension
+  character-workflow coverage, package-content assertions, and user/testing
+  documentation. The next action is to collect exact-commit cross-platform
+  package workflow artifacts; do not treat local Linux evidence as that proof.
 - `docs/design/blender-xpbd-bone-physics-design.md` remains the semantic
   authority. The completion delta is recorded in
   `docs/superpowers/specs/2026-08-02-v1-completion-design.md`.

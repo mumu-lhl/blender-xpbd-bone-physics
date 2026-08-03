@@ -1,6 +1,7 @@
 import tempfile
 import tomllib
 import unittest
+from zipfile import ZipFile
 from pathlib import Path
 
 from scripts.package_extension import package
@@ -47,3 +48,29 @@ class PackagingTests(unittest.TestCase):
             package(root, archive)
             with self.assertRaisesRegex(ValueError, "native"):
                 verify(archive, expected_platform="windows-x86_64")
+
+    def test_distribution_contains_ui_runtime_and_bundled_presets_only(self):
+        """A packaged extension keeps the complete authoring surface, not user state."""
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "package.zip"
+            package(Path("."), archive)
+            with ZipFile(archive) as zipped:
+                names = set(zipped.namelist())
+        self.assertTrue(
+            {
+                "__init__.py",
+                "authoring_adapter.py",
+                "operators/collision.py",
+                "operators/constraint.py",
+                "operators/preset.py",
+                "operators/runtime.py",
+                "operators/system.py",
+                "ui/panels.py",
+                "translations.py",
+                "presets/bone_parameters/soft_hair.json",
+                "presets/bone_parameters/firm_ears.json",
+                "presets/bone_parameters/flexible_skirt.json",
+            }.issubset(names)
+        )
+        self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
+        self.assertFalse(any(name.startswith("presets/user/") or name.endswith(".user.json") for name in names))
