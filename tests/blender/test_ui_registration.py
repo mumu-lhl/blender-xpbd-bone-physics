@@ -24,13 +24,16 @@ with tempfile.TemporaryDirectory(prefix="bone-physics-ui-registration-") as dire
 
         assert hasattr(armature, "bone_physics")
         armature.bone_physics.schema_version = 1
+        armature.bone_physics.next_stable_id = 42
         assert armature.bone_physics.schema_version == 1
+        assert armature.bone_physics.next_stable_id == 42
 
         bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=False)
         bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False, use_scripts=False)
 
         reopened_armature = bpy.data.objects["UIArmature"]
         assert reopened_armature.bone_physics.schema_version == 1
+        assert reopened_armature.bone_physics.next_stable_id == 42
 
         bone_physics.unregister()
         assert not hasattr(bpy.types.Object, "bone_physics")
