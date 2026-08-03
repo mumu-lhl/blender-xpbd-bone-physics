@@ -100,6 +100,12 @@ def _armature_update(
     _mark_dirty(properties, "world")
 
 
+def _global_enabled_update(
+    properties: bpy.types.PropertyGroup, _context: bpy.types.Context
+) -> None:
+    _mark_dirty(properties, "enabled")
+
+
 class CurvePointProperties(bpy.types.PropertyGroup):
     field: bpy.props.EnumProperty(name="Field", items=CURVE_FIELD_ITEMS, default="GRAVITY_SCALE", update=_curve_update)
     s: bpy.props.FloatProperty(name="Position", min=0.0, max=1.0, update=_curve_update)
@@ -223,7 +229,7 @@ class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
     next_stable_id: bpy.props.IntProperty(name="Next Stable ID", default=1, min=1, max=0x7FFFFFFF, update=_armature_update)
     gravity: bpy.props.FloatVectorProperty(name="Gravity", size=3, default=(0.0, -9.81, 0.0), update=_armature_update)
     fixed_dt: bpy.props.FloatProperty(name="Fixed Time Step", default=1.0 / 120.0, min=0.0, update=_armature_update)
-    global_enabled: bpy.props.BoolProperty(name="Enable Physics", default=True, update=_armature_update)
+    global_enabled: bpy.props.BoolProperty(name="Enable Physics", default=True, update=_global_enabled_update)
     workspace: bpy.props.EnumProperty(
         name="Workspace",
         items=(

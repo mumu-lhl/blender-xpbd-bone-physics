@@ -34,11 +34,12 @@ def register() -> None:
     from .operators import register as register_operators
     from .properties import register_properties
     from .ui import register as register_ui
-    from .runtime_registry import register_timer
+    from .runtime_registry import BlenderRuntimeWorldFactory, configure_runtime, register_timer
 
     register_properties()
     register_operators()
     register_ui()
+    configure_runtime(BlenderRuntimeWorldFactory())
     register_timer()
 
 
