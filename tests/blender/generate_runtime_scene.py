@@ -22,6 +22,9 @@ def generate_runtime_scene():
     torso = armature_data.edit_bones.new("torso")
     torso.head = (0.0, 0.0, 0.0)
     torso.tail = (0.0, 1.0, 0.0)
+    control = armature_data.edit_bones.new("control")
+    control.head = (-1.0, 0.0, 0.0)
+    control.tail = (-1.0, 1.0, 0.0)
     hair_a = armature_data.edit_bones.new("hair_a")
     hair_a.head = torso.tail
     hair_a.tail = (0.0, 2.0, 0.0)
@@ -31,7 +34,7 @@ def generate_runtime_scene():
     hair_b.tail = (0.0, 3.0, 0.0)
     hair_b.parent = hair_a
     bpy.ops.object.mode_set(mode="POSE")
-    for name, frame_two_x in (("hair_a", 0.25), ("hair_b", 0.5)):
+    for name, frame_two_x in (("control", 0.75), ("hair_a", 0.25), ("hair_b", 0.5)):
         bone = armature.pose.bones[name]
         bone.rotation_mode = "QUATERNION"
         bone.location = (0.0, 0.0, 0.0)

@@ -7,7 +7,7 @@ import math
 from typing import Iterable, Mapping
 
 from .mesh_builder import MeshSource, mesh_source_from_evaluated
-from .model import AnalyticColliderSpec, BoneSpec, CollisionSurfaceSpec
+from .model import AnalyticColliderSpec, BoneSpec, CollisionSurfaceSpec, TargetKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +116,25 @@ class BlenderSceneAdapter:
 
     def target_pose(self, scene, depsgraph, bone: BoneSpec) -> Pose:
         armature = self._evaluated_object(scene, depsgraph, self.armature_name)
-        pose_bone = armature.pose.bones[self.bone_names.get(bone.id, bone.name)]
         simulation = self._require_object_to_simulation()
-        return pose_from_matrix(simulation @ armature.matrix_world @ pose_bone.matrix)
+        binding = bone.target_binding
+        if binding.kind is TargetKind.WORLD:
+            return Pose(binding.local_anchor, (0.0, 0.0, 0.0, 1.0))
+        if binding.kind is TargetKind.OBJECT:
+            target = self._evaluated_object(scene, depsgraph, binding.name)
+            return _with_local_anchor(
+                pose_from_matrix(simulation @ target.matrix_world), binding.local_anchor
+            )
+        target_name = (
+            self.bone_names.get(bone.id, bone.name)
+            if binding.kind is TargetKind.OWN_ANIMATION
+            else binding.name
+        )
+        pose_bone = armature.pose.bones[target_name]
+        return _with_local_anchor(
+            pose_from_matrix(simulation @ armature.matrix_world @ pose_bone.matrix),
+            binding.local_anchor,
+        )
 
     def collider_pose(
         self,
@@ -205,3 +221,14 @@ def _mathutils():
     except ImportError as error:
         raise RuntimeError("Blender mathutils is required for scene transform access") from error
     return mathutils
+
+
+def _with_local_anchor(pose: Pose, anchor: tuple[float, float, float]) -> Pose:
+    x, y, z, w = pose.rotation
+    ax, ay, az = anchor
+    rotated = (
+        (1.0 - 2.0 * (y * y + z * z)) * ax + 2.0 * (x * y - z * w) * ay + 2.0 * (x * z + y * w) * az,
+        2.0 * (x * y + z * w) * ax + (1.0 - 2.0 * (x * x + z * z)) * ay + 2.0 * (y * z - x * w) * az,
+        2.0 * (x * z - y * w) * ax + 2.0 * (y * z + x * w) * ay + (1.0 - 2.0 * (x * x + y * y)) * az,
+    )
+    return Pose(tuple(value + offset for value, offset in zip(pose.translation, rotated)), pose.rotation)

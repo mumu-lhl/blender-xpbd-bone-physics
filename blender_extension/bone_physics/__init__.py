@@ -7,7 +7,10 @@ from .model import (
     ChainSpec,
     CrossLinkSpec,
     WorldSpec,
+    TargetBinding,
+    TargetKind,
 )
+from .authoring_adapter import SkeletonBone, compile_authoring
 from .native import (
     NativeUnavailableError,
     NativeVersionError,
@@ -52,6 +55,9 @@ __all__ = [
     "AnalyticColliderSpec",
     "AnalyticShape",
     "BoneSpec",
+    "TargetBinding",
+    "TargetKind",
+    "SkeletonBone",
     "ChainSpec",
     "CrossLinkSpec",
     "NativeBuildBatch",
@@ -71,6 +77,7 @@ __all__ = [
     "TimelineTime",
     "WorldSpec",
     "compile_world_spec",
+    "compile_authoring",
     "get_native",
     "load_native",
     "register",

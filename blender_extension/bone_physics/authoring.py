@@ -45,6 +45,8 @@ class EndpointParameters:
     angular_damping: float = 0.0
     joint_compliance: float = 0.0
     joint_damping: float = 0.0
+    angular_compliance: float = 0.0
+    angular_damping_constraint: float = 0.0
     recovery_compliance: float = 0.0
     recovery_damping: float = 0.0
     angular_limit_mode: AngularLimitMode = AngularLimitMode.FREE
@@ -81,10 +83,30 @@ class ChainAuthoring:
     target_id: str | None = None
     closed: bool = False
     override_bone_uuids: tuple[str, ...] = ()
+    overrides: tuple["BoneOverride", ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bone_uuids", tuple(self.bone_uuids))
         object.__setattr__(self, "override_bone_uuids", tuple(self.override_bone_uuids))
+        object.__setattr__(self, "overrides", tuple(self.overrides))
+
+
+@dataclass(frozen=True, slots=True)
+class BoneOverride:
+    """Explicit per-field replacement applied after chain sampling."""
+
+    bone_uuid: str
+    values: tuple[tuple[str, object], ...]
+
+    def __post_init__(self) -> None:
+        if not self.bone_uuid:
+            raise ValueError("override bone UUID must not be empty")
+        values = tuple((str(name), value) for name, value in self.values)
+        if not values or any(not name for name, _value in values):
+            raise ValueError("bone override requires named values")
+        if len({name for name, _value in values}) != len(values):
+            raise ValueError("bone override fields must be unique")
+        object.__setattr__(self, "values", values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,6 +356,7 @@ def _endpoint_scalars(endpoint: EndpointParameters) -> tuple[tuple[str, float], 
     return tuple((name, getattr(endpoint, name)) for name in (
         "inverse_mass", "gravity_scale", "translation_inertia", "rotation_inertia",
         "linear_damping", "angular_damping", "joint_compliance", "joint_damping",
+        "angular_compliance", "angular_damping_constraint",
         "recovery_compliance", "recovery_damping", "max_swing", "radius", "margin",
         "capsule_head_inset", "capsule_tail_inset", "friction", "restitution",
     ))

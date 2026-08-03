@@ -27,6 +27,31 @@ class AngularLimitMode(IntEnum):
     SWING_TWIST = 2
 
 
+class TargetKind(IntEnum):
+    OWN_ANIMATION = 0
+    BONE = 1
+    OBJECT = 2
+    WORLD = 3
+
+
+@dataclass(frozen=True, slots=True)
+class TargetBinding:
+    """Animation source for a physical body's pre-physics target pose."""
+
+    kind: TargetKind = TargetKind.OWN_ANIMATION
+    name: str | None = None
+    local_anchor: Vec3 = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", TargetKind(self.kind))
+        if self.kind is TargetKind.WORLD:
+            if self.name is not None:
+                raise ValueError("world target binding must not name a source")
+        elif self.kind in (TargetKind.BONE, TargetKind.OBJECT) and not self.name:
+            raise ValueError("bone and object target bindings require a source name")
+        object.__setattr__(self, "local_anchor", _vec3("target local anchor", self.local_anchor))
+
+
 class ChainField(IntEnum):
     INVERSE_MASS = 0
     INERTIA_SCALE_X = 1
@@ -180,6 +205,7 @@ class BoneSpec:
     max_twist: float = math.pi
     capsule_head_inset: float = 0.0
     capsule_tail_inset: float = 0.0
+    target_binding: TargetBinding = field(default_factory=TargetBinding)
 
     def __post_init__(self) -> None:
         _id("body", self.id)
@@ -205,6 +231,8 @@ class BoneSpec:
             object.__setattr__(self, field_name, _vec3(field_name, getattr(self, field_name)))
         object.__setattr__(self, "rest_rotation", _quat("rest_rotation", self.rest_rotation))
         object.__setattr__(self, "angular_limit_mode", AngularLimitMode(self.angular_limit_mode))
+        if not isinstance(self.target_binding, TargetBinding):
+            raise ValueError("target binding must be a TargetBinding")
         initial_translation = (
             self.rest_translation
             if self.initial_translation is None

@@ -14,6 +14,8 @@ from blender_extension.bone_physics.model import (  # noqa: E402
     AnalyticColliderSpec,
     AnalyticShape,
     BoneSpec,
+    TargetBinding,
+    TargetKind,
     WorldSpec,
 )
 from blender_extension.bone_physics.pose_writer import PoseWriter  # noqa: E402
@@ -34,6 +36,7 @@ try:
                 name="hair_a",
                 local_head=(0.0, 0.0, 0.0),
                 local_tail=(0.0, 1.0, 0.0),
+                target_binding=TargetBinding(TargetKind.BONE, "control"),
             ),
             BoneSpec(
                 id=2,
@@ -58,6 +61,14 @@ try:
     )
     evaluator = PrePhysicsEvaluator(adapter)
     first = evaluator.capture(scene, bpy.context.evaluated_depsgraph_get(), spec)
+    expected_control = adapter.target_pose(
+        scene,
+        bpy.context.evaluated_depsgraph_get(),
+        spec.bones[0],
+    )
+    assert first.target_poses[0].current == expected_control
+    assert len(first.target_poses) == 2
+    assert "control" not in {bone.name for bone in spec.bones}
     writer = PoseWriter(adapter)
     writer.apply(
         armature,
