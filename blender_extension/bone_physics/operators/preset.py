@@ -13,6 +13,7 @@ from ..preset_io import (
     rename_preset, sanitize_preset_filename, save_exact_armature_preset, save_parameter_preset,
     serialize_exact_armature,
 )
+from ..translations import report_exception
 from .system import _active_armature
 
 
@@ -232,7 +233,7 @@ class BONE_PHYSICS_OT_preset_apply(bpy.types.Operator):
                     target.bone_name = source["bone_name"]
                 _copy_parameters(source["parameters"], target.parameters, self.mask)
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -271,7 +272,7 @@ class BONE_PHYSICS_OT_preset_save(bpy.types.Operator):
                 )
             save_parameter_preset(path, _system_preset(_active_system(context), self.name.strip()))
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -279,6 +280,7 @@ class BONE_PHYSICS_OT_preset_save(bpy.types.Operator):
 class BONE_PHYSICS_OT_preset_delete(bpy.types.Operator):
     bl_idname = "bone_physics.preset_delete"
     bl_label = "Delete Bone Parameter Preset"
+    bl_description = "Deletes this preset permanently."
     bl_options = {"REGISTER", "UNDO"}
 
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")
@@ -296,7 +298,7 @@ class BONE_PHYSICS_OT_preset_delete(bpy.types.Operator):
         try:
             delete_preset(self.filepath, preset_directories(PRESET_KIND, create=True)[0])
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -325,7 +327,7 @@ class BONE_PHYSICS_OT_preset_copy(bpy.types.Operator):
         try:
             copy_preset(self.filepath, preset_directories(PRESET_KIND, create=True)[0], self.name)
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -346,7 +348,7 @@ class BONE_PHYSICS_OT_preset_rename(bpy.types.Operator):
         try:
             rename_preset(self.filepath, self.name, preset_directories(PRESET_KIND, create=True)[0])
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -385,7 +387,7 @@ class BONE_PHYSICS_OT_exact_preset_save(bpy.types.Operator):
                 _exact_bundle(armature.bone_physics, armature), _exact_snapshot(armature), self.name
             ))
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -420,7 +422,7 @@ class BONE_PHYSICS_OT_exact_preset_apply(bpy.types.Operator):
             mark_dirty(armature.as_pointer(), "world")
             REGISTRY.flush_dirty()
         except (OSError, PresetError, RuntimeError, ValueError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -428,6 +430,7 @@ class BONE_PHYSICS_OT_exact_preset_apply(bpy.types.Operator):
 class BONE_PHYSICS_OT_exact_preset_delete(bpy.types.Operator):
     bl_idname = "bone_physics.exact_preset_delete"
     bl_label = "Delete Exact Armature Preset"
+    bl_description = "Deletes this preset permanently."
     bl_options = {"REGISTER", "UNDO"}
 
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")
@@ -445,7 +448,7 @@ class BONE_PHYSICS_OT_exact_preset_delete(bpy.types.Operator):
         try:
             delete_preset(self.filepath, preset_directories(EXACT_ARMATURE_PRESET_KIND, create=True)[0])
         except (OSError, PresetError) as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 

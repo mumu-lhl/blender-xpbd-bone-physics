@@ -5,6 +5,7 @@ from __future__ import annotations
 import bpy
 
 from ..runtime_registry import REGISTRY, mark_dirty, reset_configured_bones
+from ..translations import report_exception
 
 
 def _armature(context):
@@ -28,12 +29,12 @@ class BONE_PHYSICS_OT_runtime_enable(bpy.types.Operator):
                 REGISTRY.restore_configured_bones(context)
                 REGISTRY.remove(context.scene, armature)
             except Exception as error:
-                self.report({"WARNING"}, str(error))
+                report_exception(self, {"WARNING"}, "Physics operation failed: {error}", error)
         else:
             try:
                 REGISTRY.ensure(context.scene, armature)
             except Exception as error:
-                self.report({"ERROR"}, str(error))
+                report_exception(self, {"ERROR"}, "Physics operation failed: {error}", error)
                 return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -86,7 +87,7 @@ class BONE_PHYSICS_OT_runtime_validate_rebuild(bpy.types.Operator):
             mark_dirty(armature.as_pointer(), "world")
             REGISTRY.flush_dirty()
         except Exception as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Physics operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -99,7 +100,7 @@ class BONE_PHYSICS_OT_runtime_reset(bpy.types.Operator):
         try:
             reset_configured_bones(context)
         except RuntimeError as error:
-            self.report({"WARNING"}, str(error))
+            report_exception(self, {"WARNING"}, "Physics operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 

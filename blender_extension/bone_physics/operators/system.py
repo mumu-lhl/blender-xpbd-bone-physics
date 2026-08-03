@@ -5,6 +5,7 @@ import uuid
 import bpy
 
 from ..properties import CURVE_FIELD_ITEMS, ENDPOINT_FIELD_ITEMS
+from ..translations import report
 
 from ..chain_discovery import (
     BoneNode,
@@ -227,7 +228,7 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
         if not branches:
             return self.execute(context)
         if len(branches) != 1:
-            self.report({"ERROR"}, "Select one branched chain head at a time")
+            report(self, {"ERROR"}, "Select one branched chain head at a time")
             return {"CANCELLED"}
         self._branch_head, self._tail_options = branches[0]
         self.tail_uuid = self._tail_options[0]
@@ -240,11 +241,11 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
             return {"CANCELLED"}
         captured_pointer = getattr(self, "_armature_pointer", armature.as_pointer())
         if armature.as_pointer() != captured_pointer:
-            self.report({"ERROR"}, "Active armature changed while choosing a chain tail")
+            report(self, {"ERROR"}, "Active armature changed while choosing a chain tail")
             return {"CANCELLED"}
         settings = armature.bone_physics
         if not settings.physics_systems:
-            self.report({"ERROR"}, "Add a physics system before adding chains")
+            report(self, {"ERROR"}, "Add a physics system before adding chains")
             return {"CANCELLED"}
         nodes = _nodes(armature)
         selected = getattr(
@@ -269,7 +270,7 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
             )
             validate_new_paths(existing_paths, new_paths)
         except BranchSelectionRequired as error:
-            self.report({"ERROR"}, f"Select a tail for branched chain {error.head_uuid}")
+            report(self, {"ERROR"}, "Select a tail for branched chain {head}", head=error.head_uuid)
             return {"CANCELLED"}
         except ValueError as error:
             self.report({"ERROR"}, str(error))
@@ -348,7 +349,7 @@ class BONE_PHYSICS_OT_apply_endpoint_value(bpy.types.Operator):
         settings = _active_armature(context).bone_physics
         targets = _selected_systems(settings)
         if not targets:
-            self.report({"ERROR"}, "Select at least one physics system")
+            report(self, {"ERROR"}, "Select at least one physics system")
             return {"CANCELLED"}
         property_name = self.field.lower()
         applied_value = (
@@ -388,7 +389,7 @@ class BONE_PHYSICS_OT_curve_point_add(bpy.types.Operator):
         for system in targets:
             positions = sorted(point.s for point in system.curve_points if point.field == self.field)
             if any(abs(position - self.position) <= 1.0e-6 for position in positions):
-                self.report({"ERROR"}, "Curve point positions must be strictly increasing")
+                report(self, {"ERROR"}, "Curve point positions must be strictly increasing")
                 return {"CANCELLED"}
         for system in targets:
             point = system.curve_points.add()
@@ -423,7 +424,7 @@ class BONE_PHYSICS_OT_override_add_selected(bpy.types.Operator):
     def execute(self, context: bpy.types.Context) -> set[str]:
         settings = _active_armature(context).bone_physics
         if not settings.physics_systems:
-            self.report({"ERROR"}, "Add a physics system before adding an override")
+            report(self, {"ERROR"}, "Add a physics system before adding an override")
             return {"CANCELLED"}
         system = settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
         existing = {override.bone_name for override in system.overrides}

@@ -1,9 +1,12 @@
 import unittest
+import ast
+from pathlib import Path
 
 from blender_extension.bone_physics.authoring import ValidationIssue, ValidationSeverity
 from blender_extension.bone_physics.translations import (
     critical_message_ids,
     format_issue,
+    critical_operator_labels,
     translated_message_ids,
 )
 
@@ -27,12 +30,38 @@ class TranslationTests(unittest.TestCase):
             ("hair-a", "hair-b"),
             (("bone_uuid", "shared-bone"),),
         )
-
         self.assertEqual(
             format_issue(issue),
             "Chains hair-a and hair-b overlap at bone shared-bone.",
         )
 
+    def test_critical_operator_labels_declared_in_source_are_translated(self):
+        operators = Path(__file__).parents[2] / "blender_extension" / "bone_physics" / "operators"
+        labels = set()
+        for path in operators.glob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "bl_label" for target in node.targets
+                ) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    labels.add(node.value.value)
+
+        self.assertEqual(critical_operator_labels() - labels, set())
+        self.assertTrue(critical_operator_labels() <= translated_message_ids("zh_HANS"))
+
+    def test_operator_report_message_ids_are_translated(self):
+        operators = Path(__file__).parents[2] / "blender_extension" / "bone_physics" / "operators"
+        message_ids = set()
+        for path in operators.glob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                    continue
+                if node.func.id not in {"report", "report_exception"} or len(node.args) < 3:
+                    continue
+                message = node.args[2]
+                if isinstance(message, ast.Constant) and isinstance(message.value, str):
+                    message_ids.add(message.value)
+
+        self.assertTrue(message_ids <= translated_message_ids("zh_HANS"), message_ids - translated_message_ids("zh_HANS"))
 
 if __name__ == "__main__":
     unittest.main()

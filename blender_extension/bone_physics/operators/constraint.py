@@ -7,6 +7,7 @@ import math
 import bpy
 
 from ..authoring import next_stable_id_after_range, stable_id_range_end
+from ..translations import report_exception
 from .system import _active_armature
 
 
@@ -128,7 +129,7 @@ class BONE_PHYSICS_OT_structural_add(bpy.types.Operator):
             group.compliance = self.compliance
             group.damping = self.damping
         except ValueError as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Structural constraint operation failed: {error}", error)
             return {"CANCELLED"}
         system.active_structural_group_index = len(system.structural_groups) - 1
         return {"FINISHED"}
@@ -196,7 +197,7 @@ class BONE_PHYSICS_OT_structural_edit(bpy.types.Operator):
             group.compliance = self.compliance
             group.damping = self.damping
         except ValueError as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Structural constraint operation failed: {error}", error)
             return {"CANCELLED"}
         return {"FINISHED"}
 

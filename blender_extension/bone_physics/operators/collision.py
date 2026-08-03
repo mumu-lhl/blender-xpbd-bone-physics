@@ -7,6 +7,7 @@ import uuid
 import bpy
 
 from .system import _active_armature, _allocate_id
+from ..translations import report
 
 
 def _new_id() -> str:
@@ -89,7 +90,7 @@ class BONE_PHYSICS_OT_collision_resource_remove(bpy.types.Operator):
         # its child, so deleting any referenced descendant remains guarded.
         references += [item.name or item.id for item in settings.collision_resources if item.kind == "COLLECTION" and _references(item.member_ids, resource.id)]
         if references:
-            self.report({"ERROR"}, "Resource is referenced by: " + ", ".join(sorted(references)))
+            report(self, {"ERROR"}, "Resource is referenced by: {references}", references=", ".join(sorted(references)))
             return {"CANCELLED"}
         settings.collision_resources.remove(settings.active_collision_resource_index)
         settings.active_collision_resource_index = min(settings.active_collision_resource_index, max(0, len(settings.collision_resources) - 1))

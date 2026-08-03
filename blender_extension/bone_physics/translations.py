@@ -7,7 +7,6 @@ arguments; this boundary turns that data into a localized display message.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 
@@ -84,16 +83,38 @@ _UI_MESSAGES = {
     "Save Exact Armature Preset",
     "Apply Exact Armature Preset",
     "Delete Exact Armature Preset",
+    "Apply Endpoint Value",
+    "Add Curve Point",
+    "Add Selected Bone Override",
+    "Remove Curve Point",
+    "Select Diagnostic Target",
     "Deletes this preset permanently.",
     "Controls will appear in this workspace.",
     "No physics systems. Add one to begin.",
     "Enter Pose Mode to add chains from selected bones.",
     "No current diagnostics.",
-    "Select at least one physics system.",
-    "Add a physics system before adding chains.",
-    "Add a physics system before adding an override.",
+    "Select at least one physics system",
+    "Add a physics system before adding chains",
+    "Add a physics system before adding an override",
     "Resource is referenced by: {references}",
+    "Preset operation failed: {error}",
+    "Structural constraint operation failed: {error}",
+    "Physics operation failed: {error}",
+    "Select one branched chain head at a time",
+    "Active armature changed while choosing a chain tail",
+    "Select a tail for branched chain {head}",
+    "Curve point positions must be strictly increasing",
+    "Diagnostic target no longer exists",
+    "Diagnostic target is hidden; it was not made visible",
+    "Diagnostic target is not selectable",
+    "Diagnostic bone requires an armature target",
+    "Diagnostic bone no longer exists",
 }
+
+_CRITICAL_OPERATOR_LABELS = frozenset({
+    "Apply Endpoint Value", "Add Curve Point", "Add Selected Bone Override",
+    "Remove Curve Point", "Select Diagnostic Target",
+})
 
 _ZH_HANS = {
     "Bone Physics": "骨骼物理", "Parameters": "参数", "Runtime": "运行时", "Structural Constraints": "结构约束",
@@ -111,11 +132,25 @@ _ZH_HANS = {
     "Delete Bone Parameter Preset": "删除骨骼参数预设", "Copy Bone Parameter Preset": "复制骨骼参数预设",
     "Rename Bone Parameter Preset": "重命名骨骼参数预设", "Save Exact Armature Preset": "保存完整骨架预设",
     "Apply Exact Armature Preset": "应用完整骨架预设", "Delete Exact Armature Preset": "删除完整骨架预设",
+    "Apply Endpoint Value": "应用端点值", "Add Curve Point": "添加曲线点", "Add Selected Bone Override": "添加选中骨骼覆盖",
+    "Remove Curve Point": "移除曲线点", "Select Diagnostic Target": "选择诊断目标",
     "Deletes this preset permanently.": "永久删除此预设。", "Controls will appear in this workspace.": "控件将显示在此工作区中。",
     "No physics systems. Add one to begin.": "没有物理系统。请添加一个以开始。", "Enter Pose Mode to add chains from selected bones.": "进入姿态模式以从选中骨骼添加链。",
-    "No current diagnostics.": "当前没有诊断信息。", "Select at least one physics system.": "至少选择一个物理系统。",
-    "Add a physics system before adding chains.": "添加链之前请先添加物理系统。", "Add a physics system before adding an override.": "添加覆盖前请先添加物理系统。",
+    "No current diagnostics.": "当前没有诊断信息。", "Select at least one physics system": "至少选择一个物理系统。",
+    "Add a physics system before adding chains": "添加链之前请先添加物理系统。", "Add a physics system before adding an override": "添加覆盖前请先添加物理系统。",
     "Resource is referenced by: {references}": "资源被以下对象引用：{references}",
+    "Preset operation failed: {error}": "预设操作失败：{error}",
+    "Structural constraint operation failed: {error}": "结构约束操作失败：{error}",
+    "Physics operation failed: {error}": "物理操作失败：{error}",
+    "Select one branched chain head at a time": "一次只能选择一个分支链头。",
+    "Active armature changed while choosing a chain tail": "选择链尾时活动骨架已更改。",
+    "Select a tail for branched chain {head}": "为分支链 {head} 选择一个尾端。",
+    "Curve point positions must be strictly increasing": "曲线点位置必须严格递增。",
+    "Diagnostic target no longer exists": "诊断目标已不存在。",
+    "Diagnostic target is hidden; it was not made visible": "诊断目标被隐藏，未显示。",
+    "Diagnostic target is not selectable": "诊断目标不可选择。",
+    "Diagnostic bone requires an armature target": "诊断骨骼需要骨架目标。",
+    "Diagnostic bone no longer exists": "诊断骨骼已不存在。",
     "Duplicate {entity}: {value}.": "重复的{entity}：{value}。", "Collision resource ID is invalid.": "碰撞资源 ID 无效。",
     "Collision resource {entity0} has an invalid stable ID.": "碰撞资源 {entity0} 的稳定 ID 无效。", "Stable ID {entity0} is invalid.": "稳定 ID {entity0} 无效。",
     "Duplicate stable ID: {value}.": "重复的稳定 ID：{value}。", "Chain {entity0} has an invalid bone path.": "链 {entity0} 的骨骼路径无效。",
@@ -141,6 +176,11 @@ def critical_message_ids() -> set[str]:
 
 def translated_message_ids(locale: str) -> set[str]:
     return {message for _context, message in CATALOG.get(locale, {})}
+
+
+def critical_operator_labels() -> frozenset[str]:
+    """Return source-declared operator labels that are release-critical."""
+    return _CRITICAL_OPERATOR_LABELS
 
 
 def _translate(message: str, *, tooltip: bool = False) -> str:
@@ -175,6 +215,11 @@ def format_issue(issue: object) -> str:
 def report(operator: Any, levels: set[str], message: str, /, **arguments: object) -> None:
     """Route operator reports through the same stable message catalog."""
     operator.report(levels, format_message(message, **arguments))
+
+
+def report_exception(operator: Any, levels: set[str], message: str, error: Exception) -> None:
+    """Preserve exception details while routing the surrounding UI message."""
+    report(operator, levels, message, error=str(error))
 
 
 def register_translations() -> None:
