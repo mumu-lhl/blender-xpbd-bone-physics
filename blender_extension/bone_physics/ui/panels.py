@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import bpy
 
-from ..preset_io import PRESET_KIND, list_presets
+from ..preset_io import EXACT_ARMATURE_PRESET_KIND, PRESET_KIND, list_presets
 
 
 _GROUP_FIELDS = {
@@ -107,6 +107,19 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
                 rename = row.operator("bone_physics.preset_rename", text="", icon="GREASEPENCIL")
                 rename.filepath = str(preset["path"])
                 delete = row.operator("bone_physics.preset_delete", text="", icon="REMOVE")
+                delete.filepath = str(preset["path"])
+        exact_box = layout.box()
+        exact_box.label(text="Exact Armature Presets")
+        exact_box.label(text="Full systems, chains, constraints, and collision bundle", icon="LOCKED")
+        exact_box.operator("bone_physics.exact_preset_save", icon="FILE_TICK")
+        for preset in list_presets(EXACT_ARMATURE_PRESET_KIND):
+            row = exact_box.row(align=True)
+            apply = row.operator("bone_physics.exact_preset_apply", text=preset["name"], icon="IMPORT")
+            apply.filepath = str(preset["path"])
+            if preset["read_only"]:
+                row.label(text="Packaged", icon="LOCKED")
+            else:
+                delete = row.operator("bone_physics.exact_preset_delete", text="", icon="REMOVE")
                 delete.filepath = str(preset["path"])
         layout.prop(system, "interpolation")
         layout.operator("bone_physics.apply_endpoint_value", text="Batch Edit Selected Systems")

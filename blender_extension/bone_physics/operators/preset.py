@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import bpy
 
 from ..preset_io import (
-    PRESET_KIND, PresetError, copy_preset, delete_preset, load_parameter_preset, preset_directories,
-    rename_preset, sanitize_preset_filename, save_parameter_preset,
+    EXACT_ARMATURE_PRESET_KIND, PRESET_KIND, PresetError, apply_exact_armature, copy_preset,
+    delete_preset, load_exact_armature_preset, load_parameter_preset, preset_directories,
+    rename_preset, sanitize_preset_filename, save_exact_armature_preset, save_parameter_preset,
+    serialize_exact_armature,
 )
 from .system import _active_armature
 
@@ -77,6 +80,87 @@ def _system_preset(system: bpy.types.PropertyGroup, name: str) -> dict:
             for override in system.overrides
         ],
     }
+
+
+_ENDPOINT_FIELDS = tuple(field for fields in _FIELDS.values() for field in fields)
+_SYSTEM_FIELDS = ("id", "stable_id", "name", "enabled", "interpolation", "collision_resource_ids",
+                  "collide_with_system_ids", "self_collision", "cross_chain_collision")
+_CHAIN_FIELDS = ("id", "stable_id", "head_uuid", "tail_uuid", "target_id", "closed")
+_STRUCTURAL_FIELDS = ("first_constraint_id", "chain_ids", "samples", "diagonals", "closed", "compliance", "damping")
+_COLLIDER_FIELDS = ("id", "stable_id", "name", "enabled", "kind", "shape", "binding", "object_name",
+                    "bone_name", "translation", "rotation", "radius", "local_a", "local_b", "half_extents",
+                    "thickness", "simplification", "excluded_materials", "excluded_regions", "ignored_body_regions",
+                    "weight_merges", "member_ids")
+
+
+def _plain(item, fields):
+    return {field: list(getattr(item, field)) if field in {"inertia_scale", "xyz_lower", "xyz_upper", "swing_axis", "translation", "rotation", "local_a", "local_b", "half_extents"} else getattr(item, field) for field in fields}
+
+
+def _exact_snapshot(armature):
+    bones = []
+    for bone in armature.data.bones:
+        matrix = tuple(float(value) for row in bone.matrix_local for value in row)
+        bones.append(SimpleNamespace(uuid=bone.name, name=bone.name,
+            parent_uuid=bone.parent.name if bone.parent else None, length=float(bone.length), rest_matrix=matrix))
+    return SimpleNamespace(bones=tuple(bones))
+
+
+def _exact_bundle(settings):
+    systems = []
+    for system in settings.physics_systems:
+        systems.append({**_plain(system, _SYSTEM_FIELDS),
+            "head": _plain(system.head, _ENDPOINT_FIELDS), "tail": _plain(system.tail, _ENDPOINT_FIELDS),
+            "curve_points": [_plain(item, ("field", "s", "value", "tangent")) for item in system.curve_points],
+            "overrides": [{"bone_name": item.bone_name, "parameters": _plain(item.parameters, _ENDPOINT_FIELDS)} for item in system.overrides],
+            "chains": [{**_plain(item, _CHAIN_FIELDS), "curve_points": [_plain(point, ("field", "s", "value", "tangent")) for point in item.curve_points]} for item in system.chains],
+            "structural_groups": [_plain(item, _STRUCTURAL_FIELDS) for item in system.structural_groups],
+        })
+    return {"id": settings.id, "next_stable_id": settings.next_stable_id,
+            "gravity": list(settings.gravity), "fixed_dt": settings.fixed_dt,
+            "physics_systems": systems,
+            "collision_resources": [_plain(item, _COLLIDER_FIELDS) for item in settings.collision_resources]}
+
+
+def _replace_collection(collection, values, writer):
+    while len(collection):
+        collection.remove(len(collection) - 1)
+    for value in values:
+        writer(collection.add(), value)
+
+
+def _write_values(item, value):
+    for field, current in value.items():
+        if not isinstance(current, (dict, list)):
+            setattr(item, field, current)
+        elif field in {"inertia_scale", "xyz_lower", "xyz_upper", "swing_axis", "translation", "rotation", "local_a", "local_b", "half_extents", "gravity"}:
+            setattr(item, field, current)
+
+
+def _write_system(system, value):
+    _write_values(system, value)
+    _write_values(system.head, value["head"])
+    _write_values(system.tail, value["tail"])
+    _replace_collection(system.curve_points, value["curve_points"], _write_values)
+    _replace_collection(system.overrides, value["overrides"], lambda item, data: (_write_values(item, {"bone_name": data["bone_name"]}), _write_values(item.parameters, data["parameters"])))
+    _replace_collection(system.chains, value["chains"], lambda item, data: (_write_values(item, data), _replace_collection(item.curve_points, data["curve_points"], _write_values)))
+    _replace_collection(system.structural_groups, value["structural_groups"], _write_values)
+
+
+def _replace_exact_bundle(settings, replacement):
+    _write_values(settings, replacement)
+    _replace_collection(settings.physics_systems, replacement["physics_systems"], _write_system)
+    _replace_collection(settings.collision_resources, replacement["collision_resources"], _write_values)
+    settings.active_system_index = min(settings.active_system_index, max(0, len(settings.physics_systems) - 1))
+    settings.active_collision_resource_index = min(settings.active_collision_resource_index, max(0, len(settings.collision_resources) - 1))
+
+
+class _ExactOwner:
+    def __init__(self, settings):
+        self.settings = settings
+
+    def replace_exact_authoring(self, replacement):
+        _replace_exact_bundle(self.settings, replacement)
 
 
 class BONE_PHYSICS_OT_preset_apply(bpy.types.Operator):
@@ -254,4 +338,107 @@ class BONE_PHYSICS_OT_preset_rename(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (BONE_PHYSICS_OT_preset_apply, BONE_PHYSICS_OT_preset_save, BONE_PHYSICS_OT_preset_delete, BONE_PHYSICS_OT_preset_copy, BONE_PHYSICS_OT_preset_rename)
+class BONE_PHYSICS_OT_exact_preset_save(bpy.types.Operator):
+    bl_idname = "bone_physics.exact_preset_save"
+    bl_label = "Save Exact Armature Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: bpy.props.StringProperty(name="Preset Name", default="Exact Armature")
+    confirmed: bpy.props.BoolProperty(default=False, options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        return _active_armature(context) is not None
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, _context):
+        self.layout.prop(self, "name")
+        self.layout.label(text="Saves all systems, chains, constraints, and collision resources.")
+
+    def execute(self, context):
+        armature = _active_armature(context)
+        try:
+            directory = preset_directories(EXACT_ARMATURE_PRESET_KIND, create=True)[0]
+            path = directory / sanitize_preset_filename(self.name)
+            if path.exists() and not self.confirmed:
+                self.confirmed = True
+                return context.window_manager.invoke_props_dialog(
+                    self, width=460, title="Overwrite Exact Armature Preset",
+                    confirm_text="Overwrite", cancel_default=True,
+                )
+            save_exact_armature_preset(path, serialize_exact_armature(
+                _exact_bundle(armature.bone_physics), _exact_snapshot(armature), self.name
+            ))
+        except (OSError, PresetError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class BONE_PHYSICS_OT_exact_preset_apply(bpy.types.Operator):
+    bl_idname = "bone_physics.exact_preset_apply"
+    bl_label = "Apply Exact Armature Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    confirmed: bpy.props.BoolProperty(default=False, options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        return _active_armature(context) is not None
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, _context):
+        self.layout.label(text=Path(self.filepath).name)
+        self.layout.label(text="This replaces every configured physics and collision setting.")
+
+    def execute(self, context):
+        armature = _active_armature(context)
+        try:
+            preset = load_exact_armature_preset(self.filepath)
+            # Validation happens inside apply before any RNA collection is cleared.
+            apply_exact_armature(_ExactOwner(armature.bone_physics), preset, _exact_snapshot(armature))
+            from ..runtime_registry import REGISTRY, mark_dirty
+            REGISTRY.mark_validated(armature.as_pointer())
+            mark_dirty(armature.as_pointer(), "world")
+            REGISTRY.flush_dirty()
+        except (OSError, PresetError, RuntimeError, ValueError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class BONE_PHYSICS_OT_exact_preset_delete(bpy.types.Operator):
+    bl_idname = "bone_physics.exact_preset_delete"
+    bl_label = "Delete Exact Armature Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(
+            self, width=420, title="Delete Exact Armature Preset",
+            confirm_text="Delete", cancel_default=True,
+        )
+
+    def draw(self, _context):
+        self.layout.label(text=Path(self.filepath).name)
+
+    def execute(self, _context):
+        try:
+            delete_preset(self.filepath, preset_directories(EXACT_ARMATURE_PRESET_KIND, create=True)[0])
+        except (OSError, PresetError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+CLASSES = (
+    BONE_PHYSICS_OT_preset_apply, BONE_PHYSICS_OT_preset_save, BONE_PHYSICS_OT_preset_delete,
+    BONE_PHYSICS_OT_preset_copy, BONE_PHYSICS_OT_preset_rename, BONE_PHYSICS_OT_exact_preset_save,
+    BONE_PHYSICS_OT_exact_preset_apply, BONE_PHYSICS_OT_exact_preset_delete,
+)

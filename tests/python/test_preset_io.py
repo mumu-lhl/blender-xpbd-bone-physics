@@ -3,16 +3,21 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from copy import deepcopy
+from types import SimpleNamespace
 from pathlib import Path
 
 from blender_extension.bone_physics.preset_io import (
     PresetError,
+    apply_exact_armature,
+    armature_fingerprint,
     copy_preset,
     delete_preset,
     load_parameter_preset,
     rename_preset,
     sanitize_preset_filename,
     save_parameter_preset,
+    serialize_exact_armature,
 )
 
 
@@ -42,7 +47,46 @@ def parameter_preset(name: str) -> dict[str, object]:
     }
 
 
+def exact_skeleton(length: float = 1.0) -> object:
+    return SimpleNamespace(bones=(
+        SimpleNamespace(
+            uuid="root", name="Root", parent_uuid=None, length=length,
+            rest_matrix=(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                         0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+        ),
+    ))
+
+
+def exact_config() -> dict[str, object]:
+    return {
+        "id": "armature", "next_stable_id": 4,
+        "physics_systems": [{"id": "system", "stable_id": 1,
+                             "chains": [{"id": "chain", "stable_id": 2,
+                                         "bone_uuids": ["root"]}]}],
+        "collision_resources": [{"id": "collider", "stable_id": 3,
+                                 "kind": "MESH", "object_name": "Body",
+                                 "excluded_regions": [7]}],
+    }
+
+
 class PresetIoTests(unittest.TestCase):
+    def test_exact_preset_rejects_changed_rest_topology_without_partial_apply(self):
+        target = deepcopy(exact_config())
+        before = json.dumps(target, sort_keys=True)
+        preset = serialize_exact_armature(exact_config(), exact_skeleton())
+        with self.assertRaisesRegex(PresetError, "rest topology"):
+            apply_exact_armature(target, preset, exact_skeleton(length=2.0))
+        self.assertEqual(json.dumps(target, sort_keys=True), before)
+
+    def test_exact_preset_excludes_runtime_state_and_cache(self):
+        source = exact_config()
+        source["velocity"] = [1.0, 2.0, 3.0]
+        source["checkpoint"] = "runtime-only"
+        data = serialize_exact_armature(source, exact_skeleton())
+        self.assertNotIn("velocity", json.dumps(data))
+        self.assertNotIn("checkpoint", json.dumps(data))
+        self.assertEqual(data["armature_fingerprint"], armature_fingerprint(exact_skeleton()))
+
     def test_parameter_preset_round_trip_is_canonical_json(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "soft_hair.json"
