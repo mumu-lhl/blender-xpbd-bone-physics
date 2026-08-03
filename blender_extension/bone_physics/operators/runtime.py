@@ -27,8 +27,8 @@ class BONE_PHYSICS_OT_runtime_enable(bpy.types.Operator):
             try:
                 REGISTRY.restore_configured_bones(context)
                 REGISTRY.remove(context.scene, armature)
-            except RuntimeError:
-                pass
+            except Exception as error:
+                self.report({"WARNING"}, str(error))
         else:
             try:
                 REGISTRY.ensure(context.scene, armature)
