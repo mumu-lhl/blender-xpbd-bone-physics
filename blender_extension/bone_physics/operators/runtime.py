@@ -30,7 +30,11 @@ class BONE_PHYSICS_OT_runtime_enable(bpy.types.Operator):
             except RuntimeError:
                 pass
         else:
-            mark_dirty(armature.as_pointer(), "world")
+            try:
+                REGISTRY.ensure(context.scene, armature)
+            except Exception as error:
+                self.report({"ERROR"}, str(error))
+                return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -76,9 +80,14 @@ class BONE_PHYSICS_OT_runtime_validate_rebuild(bpy.types.Operator):
         armature = _armature(context)
         if armature is None:
             return {"CANCELLED"}
-        REGISTRY.mark_validated(armature.as_pointer())
-        mark_dirty(armature.as_pointer(), "world")
-        REGISTRY.flush_dirty()
+        try:
+            REGISTRY.mark_validated(armature.as_pointer())
+            REGISTRY.ensure(context.scene, armature)
+            mark_dirty(armature.as_pointer(), "world")
+            REGISTRY.flush_dirty()
+        except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 

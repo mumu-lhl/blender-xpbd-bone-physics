@@ -54,6 +54,17 @@ class RuntimeRegistryTests(unittest.TestCase):
 
         self.assertEqual(built, [0, 1])
         self.assertEqual(registry.world(scene, armature).handle, 20)
+
+    def test_ensure_compiles_and_creates_an_initial_world(self):
+        registry = RuntimeRegistry(
+            factory=Factory(handles=[10]), spec_builder=lambda _scene, _armature: "fresh"
+        )
+        scene, armature = Pointer(1), Pointer(2)
+
+        world = registry.ensure(scene, armature)
+
+        self.assertEqual(world.handle, 10)
+        self.assertEqual(registry.world(scene, armature), world)
     def test_failed_rebuild_keeps_previous_valid_world(self):
         registry = RuntimeRegistry(factory=Factory(handles=[10, ValueError("bad config")]))
         registry.rebuild(scene_id=1, armature_id=2, spec=valid_spec())

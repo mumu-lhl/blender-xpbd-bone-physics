@@ -116,6 +116,13 @@ class RuntimeRegistry:
     def world(self, scene: object, armature: object):
         return self.require(scene, armature).world
 
+    def ensure(self, scene: object, armature: object):
+        """Return the live world, compiling and creating the initial one if needed."""
+        try:
+            return self.world(scene, armature)
+        except RuntimeError:
+            return self.rebuild(scene, armature)
+
     def world_by_key(self, key: tuple[int, int]):
         return self._worlds[key].world
 
@@ -178,6 +185,8 @@ class RuntimeRegistry:
             snapshot = entry.world.evaluator.capture(entry.scene, depsgraph, entry.spec)
             references = {target.body_id: target.current for target in snapshot.target_poses}
             entry.world.evaluator.adapter.restore_animation_references(entry.scene, references)
+        except Exception as error:
+            entry.world.last_error = error
         finally:
             self.remove(entry.scene, entry.armature)
 
