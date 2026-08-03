@@ -99,12 +99,14 @@ class CollisionPolicy:
     estimated_self_collision_candidates: int = 0
     rigid_constraint_edges: tuple[tuple[str, str], ...] = ()
     compliant_constraint_edges: tuple[tuple[str, str], ...] = ()
+    suspicious_weight_bone_uuids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "resource_ids", tuple(self.resource_ids))
         object.__setattr__(self, "collide_with_system_ids", tuple(self.collide_with_system_ids))
         object.__setattr__(self, "rigid_constraint_edges", tuple(tuple(edge) for edge in self.rigid_constraint_edges))
         object.__setattr__(self, "compliant_constraint_edges", tuple(tuple(edge) for edge in self.compliant_constraint_edges))
+        object.__setattr__(self, "suspicious_weight_bone_uuids", tuple(self.suspicious_weight_bone_uuids))
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,18 +172,23 @@ class StableIdAllocator:
         existing = self._assignments.get(persisted_key)
         if existing is not None:
             return existing
-        while self._next_id in self._used:
-            self._advance()
-        stable_id = self._next_id
+        stable_id = self._next_available_id()
         self._assignments[persisted_key] = stable_id
         self._used.add(stable_id)
-        self._advance()
+        self._next_id = self._following_id(stable_id)
         return stable_id
 
-    def _advance(self) -> None:
-        if self._next_id >= 0xFFFFFFFF:
-            raise ValueError("stable ID space is exhausted")
-        self._next_id += 1
+    def _next_available_id(self) -> int:
+        candidate = self._next_id
+        while candidate in self._used:
+            candidate = self._following_id(candidate)
+            if candidate == self._next_id:
+                raise ValueError("stable ID space is exhausted")
+        return candidate
+
+    @staticmethod
+    def _following_id(stable_id: int) -> int:
+        return 1 if stable_id == 0xFFFFFFFF else stable_id + 1
 
 
 def validate_authoring(config: ArmatureAuthoring) -> tuple[ValidationIssue, ...]:
@@ -245,6 +252,14 @@ def _constraint_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
         compliant = system.collision_policy.compliant_constraint_edges
         if _has_cycle(rigid):
             issues.append(_issue("constraint.cycle.all_rigid", ValidationSeverity.ERROR, (system.id,)))
+        redundant_edges = _redundant_edges(rigid, compliant)
+        for left, right in redundant_edges:
+            issues.append(_issue(
+                "constraint.redundant",
+                ValidationSeverity.WARNING,
+                (system.id, left, right),
+                (("edge", (left, right)),),
+            ))
         if len(rigid) + len(compliant) > max(4, len(system.chains) * 4):
             issues.append(_issue("constraint.overconstrained", ValidationSeverity.WARNING, (system.id,)))
     return issues
@@ -274,6 +289,13 @@ def _collision_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
             issues.append(_issue("collision.initial_penetration", ValidationSeverity.WARNING, (system.id,)))
         if policy.estimated_self_collision_candidates > 10_000:
             issues.append(_issue("collision.candidates.excessive", ValidationSeverity.WARNING, (system.id,), (("count", policy.estimated_self_collision_candidates),)))
+        for bone_uuid in sorted(set(policy.suspicious_weight_bone_uuids)):
+            issues.append(_issue(
+                "collision.weight.suspicious",
+                ValidationSeverity.WARNING,
+                (system.id, bone_uuid),
+                (("bone_uuid", bone_uuid),),
+            ))
     return issues
 
 
@@ -299,7 +321,11 @@ def _scalar_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
                 issues.append(_issue("parameter.range.inverted", ValidationSeverity.ERROR, entity_ids, (("field", "xyz"),)))
             if not _finite(endpoint.min_twist) or not _finite(endpoint.max_twist) or endpoint.min_twist > endpoint.max_twist:
                 issues.append(_issue("parameter.range.inverted", ValidationSeverity.ERROR, entity_ids, (("field", "twist"),)))
-            if endpoint.radius > 0.0 and endpoint.radius > 0.5:
+            if _finite(endpoint.radius) and endpoint.radius == 0.0:
+                issues.append(_issue("parameter.scalar.zero", ValidationSeverity.ERROR, entity_ids, (("field", "radius"),)))
+            if _finite(endpoint.max_swing) and endpoint.max_swing > math.pi:
+                issues.append(_issue("parameter.range.exceeds_limit", ValidationSeverity.ERROR, entity_ids, (("field", "max_swing"), ("limit", math.pi))))
+            if _finite(endpoint.radius) and endpoint.radius > 0.5:
                 issues.append(_issue("collision.radius.suspicious", ValidationSeverity.WARNING, entity_ids, (("radius", endpoint.radius),)))
     return issues
 
@@ -348,6 +374,22 @@ def _has_cycle(edges: Iterable[tuple[str, str]]) -> bool:
                 if neighbor != parent:
                     stack.append((neighbor, node))
     return False
+
+
+def _redundant_edges(
+    rigid: Iterable[tuple[str, str]],
+    compliant: Iterable[tuple[str, str]],
+) -> tuple[tuple[str, str], ...]:
+    seen: set[tuple[str, str]] = set()
+    redundant: set[tuple[str, str]] = set()
+    for left, right in (*rigid, *compliant):
+        if not left or not right:
+            continue
+        edge = tuple(sorted((left, right)))
+        if edge in seen:
+            redundant.add(edge)
+        seen.add(edge)
+    return tuple(sorted(redundant))
 
 
 def _finite(value: object) -> bool:

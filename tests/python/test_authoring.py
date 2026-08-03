@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError, replace
+import math
 import unittest
 
 from blender_extension.bone_physics.authoring import (
@@ -48,6 +49,17 @@ class AuthoringTests(unittest.TestCase):
         self.assertEqual(allocator.allocate("body", "uuid-a"), 7)
         self.assertEqual(allocator.allocate("body", "uuid-b"), 8)
         self.assertEqual(allocator.assignments, (("body:uuid-a", 7), ("body:uuid-b", 8)))
+
+    def test_allocator_can_allocate_u32_maximum_and_wraps_to_an_unused_id(self):
+        allocator = StableIdAllocator(next_id=0xFFFFFFFF)
+
+        self.assertEqual(allocator.allocate("body", "last"), 0xFFFFFFFF)
+        self.assertEqual(allocator.assignments, (("body:last", 0xFFFFFFFF),))
+        self.assertEqual(allocator.allocate("body", "wrapped"), 1)
+        self.assertEqual(
+            allocator.assignments,
+            (("body:last", 0xFFFFFFFF), ("body:wrapped", 1)),
+        )
 
     def test_records_are_frozen_and_validation_keeps_display_text_out_of_model(self):
         endpoint = EndpointParameters(radius=-1.0, min_twist=1.0, max_twist=0.0)
@@ -103,6 +115,42 @@ class AuthoringTests(unittest.TestCase):
         self.assertIn("resource.missing", {issue.code for issue in issues})
         self.assertIn("constraint.cycle.all_rigid", {issue.code for issue in issues})
         self.assertIn("collision.layers.exhausted", {issue.code for issue in issues})
+
+    def test_validation_rejects_zero_radius_and_excessive_swing_without_crashing(self):
+        config = armature_with_chains(("hair", ("root",)))
+        invalid = EndpointParameters(radius="not-a-number", max_swing=math.pi + 0.1)
+        config = replace(config, physics_systems=(replace(config.physics_systems[0], head=invalid),))
+
+        issues = validate_authoring(config)
+
+        self.assertIn("parameter.scalar.nonfinite", {issue.code for issue in issues})
+        self.assertIn("parameter.range.exceeds_limit", {issue.code for issue in issues})
+        zero_radius = replace(invalid, radius=0.0)
+        zero_config = replace(config, physics_systems=(replace(config.physics_systems[0], head=zero_radius),))
+        self.assertIn("parameter.scalar.zero", {issue.code for issue in validate_authoring(zero_config)})
+
+    def test_validation_warns_for_redundant_constraints_and_suspicious_weights(self):
+        config = ArmatureAuthoring(
+            id="armature",
+            physics_systems=(
+                PhysicsSystemAuthoring(
+                    id="hair",
+                    stable_id=1,
+                    chains=(ChainAuthoring("hair-chain", 2, ("root",)),),
+                    collision_policy=CollisionPolicy(
+                        rigid_constraint_edges=(("root", "tip"), ("tip", "root")),
+                        suspicious_weight_bone_uuids=("root",),
+                    ),
+                ),
+            ),
+        )
+
+        issues = validate_authoring(config)
+
+        self.assertIn("constraint.redundant", {issue.code for issue in issues})
+        weight_issue = next(issue for issue in issues if issue.code == "collision.weight.suspicious")
+        self.assertEqual(weight_issue.entity_ids, ("hair", "root"))
+        self.assertEqual(weight_issue.arguments, (("bone_uuid", "root"),))
 
     def test_duplicate_uuids_and_stable_ids_are_reported(self):
         config = ArmatureAuthoring(
