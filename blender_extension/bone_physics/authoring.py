@@ -374,11 +374,9 @@ def _identity_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
     _duplicates(
         issues,
         "resource",
-        config.resource_ids,
+        (*config.resource_ids, *(item.id for item in config.collision_resources)),
         "uuid.duplicate",
     )
-    _duplicates(issues, "collision_resource", (item.id for item in config.collision_resources), "uuid.duplicate")
-    _duplicates(issues, "collision_resource_stable_id", (str(item.stable_id) for item in config.collision_resources), "stable_id.duplicate")
     for item in config.collision_resources:
         if not item.id:
             issues.append(_issue("resource.id.invalid", ValidationSeverity.ERROR, (str(item.id),)))
@@ -386,6 +384,7 @@ def _identity_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
             issues.append(_issue("resource.stable_id.invalid", ValidationSeverity.ERROR, (item.id,)))
     stable_values = tuple(system.stable_id for system in config.physics_systems)
     stable_values += tuple(chain.stable_id for system in config.physics_systems for chain in system.chains)
+    stable_values += tuple(item.stable_id for item in config.collision_resources)
     stable_values += tuple(stable_id for _key, stable_id in config.stable_ids)
     for stable_id in stable_values:
         if isinstance(stable_id, bool) or not isinstance(stable_id, int) or not 0 < stable_id <= 0xFFFFFFFF:

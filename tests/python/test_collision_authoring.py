@@ -4,6 +4,7 @@ from blender_extension.bone_physics.authoring import (
     AnalyticCollisionResource, ArmatureAuthoring, ChainAuthoring,
     CollisionCollectionAuthoring, CollisionPolicy, MeshCollisionResource,
     PhysicsSystemAuthoring, compile_collision_matrix,
+    validate_authoring,
 )
 from blender_extension.bone_physics.authoring_adapter import SkeletonBone, compile_authoring
 from blender_extension.bone_physics.model import AnalyticShape
@@ -79,6 +80,14 @@ class CollisionAuthoringTests(unittest.TestCase):
         ))
         with self.assertRaisesRegex(ValueError, "must not cycle"):
             compile_authoring(cyclic, (SkeletonBone("uuid-left", "left", None, (0, 0, 0), (0, 1, 0)), SkeletonBone("uuid-right", "right", None, (1, 0, 0), (1, 1, 0))))
+
+    def test_resource_identity_uses_the_same_namespace_as_systems_and_chains(self):
+        config = ArmatureAuthoring("armature", (system("hair", 1),), resource_ids=("head",), collision_resources=(
+            AnalyticCollisionResource("head", 1),
+        ))
+        issues = validate_authoring(config)
+        self.assertIn("uuid.duplicate", {issue.code for issue in issues})
+        self.assertIn("stable_id.duplicate", {issue.code for issue in issues})
 
 
 if __name__ == "__main__":
