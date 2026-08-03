@@ -215,6 +215,22 @@ class StableIdAllocator:
         self._next_id = self._following_id(stable_id)
         return stable_id
 
+    def reserve(self, kind: str, key: str, stable_id: int) -> None:
+        """Mark an externally assigned ID unavailable to generated records."""
+        if not kind or not key:
+            raise ValueError("stable ID kind and key must not be empty")
+        _validate_stable_id(stable_id)
+        persisted_key = f"{kind}:{key}"
+        existing = self._assignments.get(persisted_key)
+        if existing is not None:
+            if existing != stable_id:
+                raise ValueError("stable ID reservation conflicts with an existing assignment")
+            return
+        if stable_id in self._used:
+            raise ValueError("stable ID reservation conflicts with an existing assignment")
+        self._assignments[persisted_key] = stable_id
+        self._used.add(stable_id)
+
     def _next_available_id(self) -> int:
         candidate = self._next_id
         while candidate in self._used:
@@ -226,6 +242,18 @@ class StableIdAllocator:
     @staticmethod
     def _following_id(stable_id: int) -> int:
         return 1 if stable_id == 0xFFFFFFFF else stable_id + 1
+
+
+def stable_id_range_end(first_id: int, count: int, maximum: int = 0x7FFFFFFF) -> int:
+    """Return an inclusive RNA-safe range end without allowing overflow."""
+    if isinstance(first_id, bool) or not isinstance(first_id, int) or first_id < 1:
+        raise ValueError("stable ID range must start at a positive integer")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError("stable ID range count must be positive")
+    end = first_id + count - 1
+    if end > maximum:
+        raise ValueError("stable ID range exceeds the RNA integer limit")
+    return end
 
 
 def validate_authoring(config: ArmatureAuthoring) -> tuple[ValidationIssue, ...]:

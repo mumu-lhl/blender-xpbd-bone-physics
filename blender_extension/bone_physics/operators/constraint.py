@@ -6,6 +6,7 @@ import math
 
 import bpy
 
+from ..authoring import stable_id_range_end
 from .system import _active_armature
 
 
@@ -34,6 +35,7 @@ def _required_constraint_count(chain_count: int, sample_count: int, diagonals: b
 def _allocate_constraint_range(settings: bpy.types.PropertyGroup, count: int) -> int:
     if count <= 0:
         raise ValueError("structural group must generate at least one constraint")
+    stable_id_range_end(settings.next_stable_id, count)
     used = {
         item.stable_id
         for system in settings.physics_systems
@@ -48,8 +50,7 @@ def _allocate_constraint_range(settings: bpy.types.PropertyGroup, count: int) ->
     candidate = settings.next_stable_id
     while any(value in used for value in range(candidate, candidate + count)):
         candidate += 1
-        if candidate + count - 1 > 0x7FFFFFFF:
-            raise ValueError("stable ID space is exhausted")
+        stable_id_range_end(candidate, count)
     settings.next_stable_id = candidate + count
     return candidate
 
@@ -72,7 +73,11 @@ def _range_is_available(
             )
             if first_constraint_id < other_end and group.first_constraint_id < end:
                 return False
-    return end <= 0x80000000
+    try:
+        stable_id_range_end(first_constraint_id, count)
+    except ValueError:
+        return False
+    return True
 
 
 def _validate_topology(chain_ids: tuple[str, ...], samples: tuple[float, ...], diagonals: bool, closed: bool, compliance: float) -> None:

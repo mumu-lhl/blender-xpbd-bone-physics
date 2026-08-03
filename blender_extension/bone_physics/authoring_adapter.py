@@ -169,6 +169,20 @@ def compile_authoring(
     if len(nodes) != len(skeleton):
         raise ValueError("skeleton bone UUIDs must be unique")
     allocator = StableIdAllocator(config.stable_ids, config.next_stable_id)
+    for system in config.physics_systems:
+        if not system.enabled:
+            continue
+        for cross_link in system.cross_links:
+            link_count = (len(cross_link.chain_ids) - 1 + int(cross_link.closed)) * (
+                len(cross_link.samples)
+                + (2 * (len(cross_link.samples) - 1) if cross_link.diagonals else 0)
+            )
+            for offset in range(link_count):
+                allocator.reserve(
+                    "cross_link_constraint",
+                    str(cross_link.first_constraint_id + offset),
+                    cross_link.first_constraint_id + offset,
+                )
     bones: list[BoneSpec] = []
     chains: list[ChainSpec] = []
     cross_links: list[CrossLinkSpec] = []

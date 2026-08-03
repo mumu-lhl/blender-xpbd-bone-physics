@@ -18,6 +18,7 @@ from blender_extension.bone_physics.model import AngularLimitMode
 from blender_extension.bone_physics.model import (
     ChainField,
     ChainFieldCurve,
+    CrossLinkSpec,
     CurvePoint,
     CurveInterpolation,
     ParameterCurve,
@@ -245,6 +246,31 @@ class AuthoringAdapterTests(unittest.TestCase):
         self.assertEqual(len(world.cross_links), 1)
         self.assertEqual(world.cross_links[0].chain_ids, ("root", "mid", "tip"))
         self.assertEqual(len(compile_world_spec(world).constraints["ids"]), 9)
+
+    def test_cross_link_ids_are_reserved_before_runtime_ids_are_allocated(self):
+        config = ArmatureAuthoring(
+            id="armature",
+            physics_systems=(PhysicsSystemAuthoring(
+                id="skirt", stable_id=10,
+                chains=(
+                    ChainAuthoring("root", 20, ("root",)),
+                    ChainAuthoring("mid", 21, ("mid",)),
+                    ChainAuthoring("tip", 22, ("tip",)),
+                ),
+                cross_links=(CrossLinkSpec(
+                    first_constraint_id=1,
+                    chain_ids=("root", "mid", "tip"),
+                    samples=(0.0, 1.0),
+                    closed=True,
+                ),),
+            ),),
+        )
+
+        compiled = compile_world_spec(compile_authoring(config, skeleton()))
+
+        ids = tuple(compiled.constraints["ids"])
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(tuple(sorted(identifier for identifier, kind in zip(ids, compiled.constraints["kinds"]) if kind == 1)), tuple(range(1, 7)))
 
 
 if __name__ == "__main__":
