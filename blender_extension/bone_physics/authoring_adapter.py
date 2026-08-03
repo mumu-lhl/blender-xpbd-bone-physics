@@ -154,6 +154,58 @@ def collision_resources_from_rna(resources: Iterable[object]):
     return tuple(sorted(result, key=lambda item: item.stable_id))
 
 
+def compile_armature_rna(scene: object, armature: object) -> WorldSpec:
+    """Take a fresh RNA snapshot and compile it into concrete runtime values."""
+    del scene
+    settings = armature.bone_physics
+    paths = _chain_paths(armature)
+    systems = tuple(
+        physics_system_from_rna(system, paths) for system in settings.physics_systems
+    )
+    config = ArmatureAuthoring(
+        id=settings.id,
+        physics_systems=systems,
+        collision_resources=collision_resources_from_rna(settings.collision_resources),
+        next_stable_id=int(settings.next_stable_id),
+        gravity=tuple(settings.gravity),
+        fixed_dt=float(settings.fixed_dt),
+    )
+    skeleton = tuple(
+        SkeletonBone(
+            uuid=bone.name,
+            name=bone.name,
+            parent_uuid=bone.parent.name if bone.parent is not None else None,
+            head=tuple(bone.head_local),
+            tail=tuple(bone.tail_local),
+            rest_rotation=_quaternion_tuple(bone.matrix_local.to_quaternion()),
+        )
+        for bone in sorted(armature.data.bones, key=lambda item: item.name)
+    )
+    return compile_authoring(config, skeleton)
+
+
+def _chain_paths(armature: object) -> dict[str, tuple[str, ...]]:
+    pose_bones = armature.pose.bones
+    paths: dict[str, tuple[str, ...]] = {}
+    for system in armature.bone_physics.physics_systems:
+        for chain in system.chains:
+            current = pose_bones.get(chain.tail_uuid)
+            names: list[str] = []
+            while current is not None:
+                names.append(current.name)
+                if current.name == chain.head_uuid:
+                    paths[chain.id] = tuple(reversed(names))
+                    break
+                current = current.parent
+            else:
+                raise ValueError(f"chain {chain.id!r} tail is not below its head")
+    return paths
+
+
+def _quaternion_tuple(value: object) -> tuple[float, float, float, float]:
+    return (float(value.x), float(value.y), float(value.z), float(value.w))
+
+
 def _csv(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in value.split(",") if part.strip())
 

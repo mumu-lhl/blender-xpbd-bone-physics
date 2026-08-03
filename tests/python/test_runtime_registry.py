@@ -37,6 +37,23 @@ def invalid_spec():
 
 
 class RuntimeRegistryTests(unittest.TestCase):
+    def test_dirty_rebuild_compiles_a_fresh_spec(self):
+        built = []
+
+        def build_spec(scene, armature):
+            del scene, armature
+            built.append(len(built))
+            return built[-1]
+
+        registry = RuntimeRegistry(factory=Factory(handles=[10, 20]), spec_builder=build_spec)
+        scene, armature = Pointer(1), Pointer(2)
+        registry.rebuild(scene, armature)
+        registry.mark_dirty(2, "parameters")
+
+        registry.flush_dirty()
+
+        self.assertEqual(built, [0, 1])
+        self.assertEqual(registry.world(scene, armature).handle, 20)
     def test_failed_rebuild_keeps_previous_valid_world(self):
         registry = RuntimeRegistry(factory=Factory(handles=[10, ValueError("bad config")]))
         registry.rebuild(scene_id=1, armature_id=2, spec=valid_spec())
@@ -66,3 +83,11 @@ class RuntimeRegistryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Pointer:
+    def __init__(self, value):
+        self.value = value
+
+    def as_pointer(self):
+        return self.value
