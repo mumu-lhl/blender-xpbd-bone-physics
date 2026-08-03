@@ -273,7 +273,7 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
             report(self, {"ERROR"}, "Select a tail for branched chain {head}", head=error.head_uuid)
             return {"CANCELLED"}
         except ValueError as error:
-            self.report({"ERROR"}, str(error))
+            report_exception(self, {"ERROR"}, "Physics operation failed", error)
             return {"CANCELLED"}
         system = settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
         for path in new_paths:
