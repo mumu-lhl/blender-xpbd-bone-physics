@@ -441,6 +441,8 @@ class AnalyticColliderSpec:
     half_extents: Vec3 = ZERO3
     enabled: bool = True
     source_object: str | None = None
+    source_binding: str = "WORLD"
+    source_bone: str | None = None
 
     def __post_init__(self) -> None:
         _id("analytic collider", self.id)
@@ -453,6 +455,11 @@ class AnalyticColliderSpec:
             raise ValueError("half extents must be nonnegative")
         if self.source_object == "":
             raise ValueError("analytic collider source object must not be empty")
+        object.__setattr__(self, "source_binding", str(self.source_binding).upper())
+        if self.source_binding not in {"WORLD", "OBJECT", "BONE"}:
+            raise ValueError("analytic collider binding must be world, object, or bone")
+        if self.source_bone == "":
+            raise ValueError("analytic collider source bone must not be empty")
 
 
 @dataclass(frozen=True, slots=True)

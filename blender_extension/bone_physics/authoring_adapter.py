@@ -278,7 +278,7 @@ def compile_authoring(
             ))
         cross_links.extend(system.cross_links)
     bones = _compile_body_collision_filters(bones, bone_system, bone_uuid_ids, bone_chain)
-    analytic, surfaces = _collision_resources(config, collision_snapshot)
+    analytic, surfaces = _collision_resources(config, collision_snapshot, tuple(bone.id for bone in bones))
     return WorldSpec(
         bones=tuple(sorted(bones, key=lambda item: item.id)),
         chains=tuple(sorted(chains, key=lambda item: item.id)),
@@ -319,6 +319,7 @@ def _compile_body_collision_filters(
 def _collision_resources(
     config: ArmatureAuthoring,
     snapshot: Iterable[AnalyticColliderSpec | CollisionSurfaceSpec],
+    body_ids: tuple[int, ...],
 ) -> tuple[tuple[AnalyticColliderSpec, ...], tuple[CollisionSurfaceSpec, ...]]:
     """Resolve selected reusable resources without leaking geometry backend types."""
     raw = tuple(snapshot)
@@ -358,13 +359,14 @@ def _collision_resources(
                 rotation=resource.rotation, radius=resource.radius, local_a=resource.local_a,
                 local_b=resource.local_b, half_extents=resource.half_extents,
                 enabled=True, source_object=resource.object_name,
+                source_binding=resource.binding, source_bone=resource.bone_name,
             ))
         elif isinstance(resource, MeshCollisionResource) and resource.enabled:
             surfaces.append(CollisionSurfaceSpec(
                 id=resource.stable_id, object_name=resource.object_name,
                 excluded_materials=resource.excluded_materials,
                 excluded_region_ids=resource.excluded_regions,
-                body_region_ignores=tuple((body_id, resource.ignored_body_regions) for body_id in ()),
+                body_region_ignores=tuple((body_id, resource.ignored_body_regions) for body_id in body_ids),
                 upstream_weight_merges=resource.weight_merges, thickness=resource.thickness,
                 simplify_max_error=resource.simplification,
             ))

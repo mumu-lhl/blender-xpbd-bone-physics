@@ -345,7 +345,10 @@ def compile_collision_matrix(
     A request from either side enables a cross-system pair on both sides.  This
     makes authoring order irrelevant and prevents a one-sided contact policy.
     """
-    ordered = tuple(sorted((item for item in systems if item.enabled), key=lambda item: item.stable_id))
+    enabled = tuple(item for item in systems if item.enabled)
+    if len({item.stable_id for item in enabled}) != len(enabled):
+        raise ValueError("physics system stable IDs must be unique for collision compilation")
+    ordered = tuple(sorted(enabled, key=lambda item: item.stable_id))
     if len(ordered) > 32:
         raise ValueError("physics systems exceed 32 collision layers")
     if len({item.id for item in ordered}) != len(ordered):
