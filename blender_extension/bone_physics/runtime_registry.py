@@ -12,7 +12,12 @@ import threading
 import time
 from typing import Callable, Protocol
 
-from .diagnostics import DiagnosticBindings, diagnostic_bindings, map_runtime_error
+from .diagnostics import (
+    DiagnosticBindings,
+    authoring_diagnostics,
+    diagnostic_bindings,
+    map_runtime_error,
+)
 
 
 _STRUCTURAL_CATEGORIES = frozenset({"chains", "constraints", "systems", "collisions", "world"})
@@ -116,6 +121,7 @@ class RuntimeRegistry:
         if previous is not None:
             _destroy(previous.world)
         _clear_diagnostics(armature)
+        _publish_authoring_diagnostics(scene, armature)
         _refresh_overlay(armature, spec)
         return replacement
 
@@ -239,6 +245,37 @@ def _clear_diagnostics(armature: object | None) -> None:
             items.remove(len(items) - 1)
 
 
+def _clear_runtime_diagnostics(armature: object | None) -> None:
+    settings = getattr(armature, "bone_physics", None)
+    items = getattr(settings, "diagnostic_items", None)
+    if items is None:
+        return
+    for index in reversed(range(len(items))):
+        if str(getattr(items[index], "code", "")).startswith("runtime."):
+            items.remove(index)
+
+
+def _publish_authoring_diagnostics(scene: object, armature: object) -> None:
+    del scene
+    settings = getattr(armature, "bone_physics", None)
+    items = getattr(settings, "diagnostic_items", None)
+    if items is None:
+        return
+    try:
+        from .authoring_adapter import validate_armature_rna
+
+        diagnostics = authoring_diagnostics(validate_armature_rna(armature))
+    except Exception:
+        diagnostics = ()
+    for diagnostic in diagnostics:
+        item = items.add()
+        item.code = diagnostic.code
+        item.severity = diagnostic.severity
+        item.entity_kind = diagnostic.entity_kind
+        item.entity_id = diagnostic.entity_id
+        item.stable_id = diagnostic.stable_id
+
+
 def _set_runtime_diagnostic(
     armature: object,
     error: Exception,
@@ -248,7 +285,7 @@ def _set_runtime_diagnostic(
     items = getattr(settings, "diagnostic_items", None)
     if items is None:
         return
-    _clear_diagnostics(armature)
+    _clear_runtime_diagnostics(armature)
     values = _error_values(error)
     if bindings is not None:
         diagnostic = map_runtime_error(bindings, values)
@@ -282,11 +319,11 @@ def _error_values(error: Exception) -> dict[str, object]:
     return values
 
 
-def _refresh_overlay(armature: object, spec: object, poses=None) -> None:
+def _refresh_overlay(armature: object, spec: object, poses=None, mesh_batches=()) -> None:
     try:
         from . import viewport
 
-        viewport.refresh_world_overlay(armature, spec, poses)
+        viewport.refresh_world_overlay(armature, spec, poses, mesh_batches)
     except (ImportError, ReferenceError, RuntimeError, AttributeError):
         return
 
@@ -348,9 +385,9 @@ def _frame_change_handler(scene, depsgraph) -> None:
         if error is not None:
             _set_runtime_diagnostic(entry.armature, error, entry.bindings)
         elif getattr(result, "executed", False):
-            _clear_diagnostics(entry.armature)
+            _clear_runtime_diagnostics(entry.armature)
             poses = _runtime_poses(entry.world)
-            _refresh_overlay(entry.armature, entry.spec, poses)
+            _refresh_overlay(entry.armature, entry.spec, poses, getattr(entry.world, "_last_mesh_batches", ()))
 
 
 def _runtime_poses(world: object) -> dict[int, object] | None:

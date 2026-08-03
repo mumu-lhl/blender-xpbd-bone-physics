@@ -157,19 +157,8 @@ def collision_resources_from_rna(resources: Iterable[object]):
 def compile_armature_rna(scene: object, armature: object) -> WorldSpec:
     """Take a fresh RNA snapshot and compile it into concrete runtime values."""
     del scene
-    settings = armature.bone_physics
     paths = _chain_paths(armature)
-    systems = tuple(
-        physics_system_from_rna(system, paths) for system in settings.physics_systems
-    )
-    config = ArmatureAuthoring(
-        id=settings.id,
-        physics_systems=systems,
-        collision_resources=collision_resources_from_rna(settings.collision_resources),
-        next_stable_id=int(settings.next_stable_id),
-        gravity=tuple(settings.gravity),
-        fixed_dt=float(settings.fixed_dt),
-    )
+    config = armature_authoring_from_rna(armature, paths)
     skeleton = tuple(
         SkeletonBone(
             uuid=bone.name,
@@ -182,6 +171,32 @@ def compile_armature_rna(scene: object, armature: object) -> WorldSpec:
         for bone in sorted(armature.data.bones, key=lambda item: item.name)
     )
     return compile_authoring(config, skeleton)
+
+
+def armature_authoring_from_rna(
+    armature: object, paths: dict[str, tuple[str, ...]] | None = None
+) -> ArmatureAuthoring:
+    """Snapshot RNA into the presentation-free authoring validator input."""
+    settings = armature.bone_physics
+    paths = _chain_paths(armature) if paths is None else paths
+    systems = tuple(
+        physics_system_from_rna(system, paths) for system in settings.physics_systems
+    )
+    return ArmatureAuthoring(
+        id=settings.id,
+        physics_systems=systems,
+        collision_resources=collision_resources_from_rna(settings.collision_resources),
+        next_stable_id=int(settings.next_stable_id),
+        gravity=tuple(settings.gravity),
+        fixed_dt=float(settings.fixed_dt),
+    )
+
+
+def validate_armature_rna(armature: object):
+    """Return fresh authoring issues before attempting native world creation."""
+    from .authoring import validate_authoring
+
+    return validate_authoring(armature_authoring_from_rna(armature))
 
 
 def _chain_paths(armature: object) -> dict[str, tuple[str, ...]]:

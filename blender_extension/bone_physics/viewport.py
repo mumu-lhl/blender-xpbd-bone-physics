@@ -84,7 +84,7 @@ def unregister() -> None:
         bpy.app.handlers.load_post.remove(disable_all_overlays)
 
 
-def overlay_lines_for_world(spec: object, poses: Mapping[int, object] | None = None) -> dict[str, tuple[tuple[float, float, float], ...]]:
+def overlay_lines_for_world(spec: object, poses: Mapping[int, object] | None = None, mesh_batches: Iterable[object] = ()) -> dict[str, tuple[tuple[float, float, float], ...]]:
     """Build bounded line snapshots from immutable world data and poses."""
     categories = {name: [] for name in _COLORS}
     bones = tuple(getattr(spec, "bones", ()))
@@ -117,17 +117,26 @@ def overlay_lines_for_world(spec: object, poses: Mapping[int, object] | None = N
                     categories["structural"].extend((first, second))
     except (AttributeError, KeyError, TypeError, ValueError):
         categories["invalid"].extend(((0.0, 0.0, 0.0), (0.05, 0.05, 0.0)))
+    for batch in mesh_batches:
+        try:
+            vertices = tuple(batch.current_vertices)
+            for triangle in batch.topology.triangles:
+                a, b, c = (vertices[index] for index in triangle)
+                categories["mesh"].extend((a, b, b, c, c, a))
+        except (AttributeError, IndexError, TypeError, ValueError):
+            categories["invalid"].extend(((0.0, 0.0, 0.0), (0.05, 0.0, 0.05)))
     return {name: tuple(points) for name, points in categories.items()}
 
 
-def refresh_world_overlay(armature: object, spec: object, poses: Mapping[int, object] | None = None) -> None:
+def refresh_world_overlay(armature: object, spec: object, poses: Mapping[int, object] | None = None, mesh_batches: Iterable[object] = ()) -> None:
     """Publish a new snapshot to every live 3D view for an armature."""
     try:
         import bpy as _bpy
         settings = getattr(armature, "bone_physics", None)
         if settings is not None and not getattr(settings, "show_viewport_overlays", False):
             return
-        lines = overlay_lines_for_world(spec, poses)
+        lines = overlay_lines_for_world(spec, poses, mesh_batches)
+        matrix = getattr(armature, "matrix_world", None)
         for screen in tuple(_bpy.data.screens):
             for area in tuple(screen.areas):
                 try:
@@ -135,11 +144,30 @@ def refresh_world_overlay(armature: object, spec: object, poses: Mapping[int, ob
                         continue
                     enable_overlay(area)
                     for category, points in lines.items():
-                        set_overlay_lines(area, category, points)
+                        set_overlay_lines(area, category, (_transform_point(matrix, point) for point in points))
                 except (ReferenceError, AttributeError, RuntimeError):
                     continue
     except (ImportError, ReferenceError, AttributeError, RuntimeError):
         return
+
+
+def _transform_point(matrix: object, point: tuple[float, float, float]) -> tuple[float, float, float]:
+    if matrix is None:
+        return point
+    try:
+        result = matrix @ point
+        values = tuple(float(value) for value in result)
+        if len(values) >= 3:
+            return values[:3]  # type: ignore[return-value]
+    except (TypeError, AttributeError, ValueError):
+        pass
+    try:
+        return tuple(
+            sum(float(matrix[row][column]) * (point[column] if column < 3 else 1.0) for column in range(4))
+            for row in range(3)
+        )  # type: ignore[return-value]
+    except (TypeError, AttributeError, IndexError, ValueError):
+        return point
 
 
 def _body_point(bone: object, local: Iterable[float], pose: object | None) -> tuple[float, float, float]:

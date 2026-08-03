@@ -90,6 +90,7 @@ class RuntimeWorld:
         self.paused = False
         self.last_error: Exception | None = None
         self._last_valid_channels: tuple[object, ...] | None = None
+        self._last_mesh_batches: tuple[object, ...] = ()
         self._destroyed = False
 
     def on_frame_change(self, scene, depsgraph) -> RuntimeResult:
@@ -148,6 +149,7 @@ class RuntimeWorld:
                         self.world_spec,
                         sample_time,
                     )
+                    self._last_mesh_batches = tuple(snapshot.mesh_batches)
                     self.bridge.set_snapshot(self.handle, snapshot)
                     self.bridge.solve(
                         self.handle,
