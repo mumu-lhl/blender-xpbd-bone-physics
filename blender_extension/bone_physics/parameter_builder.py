@@ -292,25 +292,30 @@ def _apply_chain_curves(spec: WorldSpec) -> tuple[BoneSpec, ...]:
     replacements: dict[int, BoneSpec] = {bone.id: bone for bone in spec.bones}
     claimed: set[int] = set()
     for chain in spec.chains:
-        if not chain.field_curves:
+        if not chain.field_curves and not chain.bone_overrides:
             continue
         overlap = claimed.intersection(chain.body_ids)
         if overlap:
             raise ValueError(f"body {min(overlap)} receives parameter curves from multiple chains")
         claimed.update(chain.body_ids)
-        boundaries = chain_boundaries(chain, replacements)
-        for index, body_id in enumerate(chain.body_ids):
-            bone = replacements[body_id]
-            midpoint = (boundaries[index] + boundaries[index + 1]) * 0.5
-            joint_s = boundaries[index]
-            updates = _chain_field_updates(
-                bone,
-                tuple(
-                    (item.field, item.curve.sample(joint_s if item.field in JOINT_FIELDS else midpoint))
-                    for item in chain.field_curves
-                ),
+        if chain.field_curves:
+            boundaries = chain_boundaries(chain, replacements)
+            for index, body_id in enumerate(chain.body_ids):
+                bone = replacements[body_id]
+                midpoint = (boundaries[index] + boundaries[index + 1]) * 0.5
+                joint_s = boundaries[index]
+                updates = _chain_field_updates(
+                    bone,
+                    tuple(
+                        (item.field, item.curve.sample(joint_s if item.field in JOINT_FIELDS else midpoint))
+                        for item in chain.field_curves
+                    ),
+                )
+                replacements[body_id] = replace(bone, **updates)
+        for override in chain.bone_overrides:
+            replacements[override.body_id] = replace(
+                replacements[override.body_id], **dict(override.values)
             )
-            replacements[body_id] = replace(bone, **updates)
     return tuple(sorted(replacements.values(), key=lambda bone: bone.id))
 
 

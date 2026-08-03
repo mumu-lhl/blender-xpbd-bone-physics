@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import math
 from typing import Iterable
 
 from .authoring import ArmatureAuthoring, BoneOverride, EndpointParameters, StableIdAllocator
 from .model import (
     AnalyticColliderSpec,
-    AngularLimitMode,
     BoneSpec,
+    ChainBoneOverride,
+    ChainField,
+    ChainFieldCurve,
     ChainSpec,
     CollisionSurfaceSpec,
     CurvePoint,
@@ -61,12 +63,10 @@ def compile_authoring(
                 raise ValueError("a physical bone may belong to only one chain")
             claimed.update(path)
             ids = {uuid: allocator.allocate("body", uuid) for uuid in path}
-            sampled = _sample_chain(path, nodes, system.head, system.tail, chain_authoring.overrides)
             for index, uuid in enumerate(path):
                 node = nodes[uuid]
                 parent_id = ids.get(node.parent_uuid)
-                values = sampled[uuid]
-                binding = _binding(chain_authoring.target_id, node, index)
+                binding = _binding(chain_authoring.target_binding, chain_authoring.target_id, node, index, nodes)
                 bones.append(BoneSpec(
                     id=ids[uuid], name=node.name, parent_id=parent_id,
                     joint_constraint_id=allocator.allocate("joint", uuid) if parent_id is not None else None,
@@ -74,9 +74,18 @@ def compile_authoring(
                     recovery_constraint_id=allocator.allocate("recovery", uuid),
                     rest_translation=node.head, local_head=(0.0, 0.0, 0.0),
                     local_tail=(0.0, _length(node), 0.0), rest_rotation=node.rest_rotation,
-                    target_binding=binding, **values,
+                    target_binding=binding, angular_limit_mode=system.head.angular_limit_mode,
                 ))
-            chains.append(ChainSpec(id=chain_authoring.id, body_ids=tuple(ids[uuid] for uuid in path), closed=chain_authoring.closed))
+            chains.append(ChainSpec(
+                id=chain_authoring.id,
+                body_ids=tuple(ids[uuid] for uuid in path),
+                closed=chain_authoring.closed,
+                field_curves=_field_curves(system.head, system.tail),
+                bone_overrides=tuple(
+                    ChainBoneOverride(ids[override.bone_uuid], override.values)
+                    for override in _validated_overrides(path, chain_authoring.overrides)
+                ),
+            ))
     analytic = tuple(item for item in collision_snapshot if isinstance(item, AnalyticColliderSpec))
     surfaces = tuple(item for item in collision_snapshot if isinstance(item, CollisionSurfaceSpec))
     return WorldSpec(
@@ -92,42 +101,58 @@ def _length(node: SkeletonBone) -> float:
     return math.sqrt(sum((tail - head) ** 2 for head, tail in zip(node.head, node.tail)))
 
 
-def _sample_chain(path, nodes, head: EndpointParameters, tail: EndpointParameters, overrides: tuple[BoneOverride, ...]):
-    lengths = tuple(_length(nodes[uuid]) for uuid in path)
-    total = math.fsum(lengths)
-    if total <= 1.0e-6:
-        raise ValueError("physical chain must have positive rest length")
+def _validated_overrides(path: tuple[str, ...], overrides: tuple[BoneOverride, ...]) -> tuple[BoneOverride, ...]:
     override_by_bone = {item.bone_uuid: dict(item.values) for item in overrides}
     if len(override_by_bone) != len(overrides) or any(uuid not in path for uuid in override_by_bone):
         raise ValueError("overrides must name unique bones in their chain")
-    result = {}
-    traversed = 0.0
-    for uuid, length in zip(path, lengths):
-        midpoint = (traversed + length * 0.5) / total
-        values = _interpolate(head, tail, midpoint)
-        values.update(_override_values(override_by_bone.get(uuid, {})))
-        result[uuid] = values
-        traversed += length
-    return result
+    for values in override_by_bone.values():
+        _override_values(values)
+    return tuple(sorted(overrides, key=lambda item: item.bone_uuid))
 
 
-def _interpolate(head: EndpointParameters, tail: EndpointParameters, s: float) -> dict[str, object]:
-    scalar_names = (
-        "inverse_mass", "gravity_scale", "translation_inertia", "rotation_inertia", "linear_damping", "angular_damping",
-        "joint_compliance", "joint_damping", "angular_compliance", "angular_damping_constraint", "recovery_compliance", "recovery_damping",
-        "radius", "margin", "capsule_head_inset", "capsule_tail_inset", "friction", "restitution", "max_swing", "min_twist", "max_twist",
+def _field_curves(head: EndpointParameters, tail: EndpointParameters) -> tuple[ChainFieldCurve, ...]:
+    fields = (
+        (ChainField.INVERSE_MASS, head.inverse_mass, tail.inverse_mass),
+        (ChainField.INERTIA_SCALE_X, head.inertia_scale[0], tail.inertia_scale[0]),
+        (ChainField.INERTIA_SCALE_Y, head.inertia_scale[1], tail.inertia_scale[1]),
+        (ChainField.INERTIA_SCALE_Z, head.inertia_scale[2], tail.inertia_scale[2]),
+        (ChainField.GRAVITY_SCALE, head.gravity_scale, tail.gravity_scale),
+        (ChainField.TRANSLATION_INERTIA, head.translation_inertia, tail.translation_inertia),
+        (ChainField.ROTATION_INERTIA, head.rotation_inertia, tail.rotation_inertia),
+        (ChainField.LINEAR_DAMPING, head.linear_damping, tail.linear_damping),
+        (ChainField.ANGULAR_DAMPING, head.angular_damping, tail.angular_damping),
+        (ChainField.JOINT_COMPLIANCE, head.joint_compliance, tail.joint_compliance),
+        (ChainField.JOINT_DAMPING, head.joint_damping, tail.joint_damping),
+        (ChainField.ANGULAR_COMPLIANCE, head.angular_compliance, tail.angular_compliance),
+        (ChainField.ANGULAR_CONSTRAINT_DAMPING, head.angular_damping_constraint, tail.angular_damping_constraint),
+        (ChainField.RECOVERY_COMPLIANCE, head.recovery_compliance, tail.recovery_compliance),
+        (ChainField.RECOVERY_DAMPING, head.recovery_damping, tail.recovery_damping),
+        (ChainField.RADIUS, head.radius, tail.radius),
+        (ChainField.MARGIN, head.margin, tail.margin),
+        (ChainField.FRICTION, head.friction, tail.friction),
+        (ChainField.RESTITUTION, head.restitution, tail.restitution),
+        (ChainField.XYZ_LOWER_X, head.xyz_lower[0], tail.xyz_lower[0]),
+        (ChainField.XYZ_LOWER_Y, head.xyz_lower[1], tail.xyz_lower[1]),
+        (ChainField.XYZ_LOWER_Z, head.xyz_lower[2], tail.xyz_lower[2]),
+        (ChainField.XYZ_UPPER_X, head.xyz_upper[0], tail.xyz_upper[0]),
+        (ChainField.XYZ_UPPER_Y, head.xyz_upper[1], tail.xyz_upper[1]),
+        (ChainField.XYZ_UPPER_Z, head.xyz_upper[2], tail.xyz_upper[2]),
+        (ChainField.SWING_AXIS_X, head.swing_axis[0], tail.swing_axis[0]),
+        (ChainField.SWING_AXIS_Y, head.swing_axis[1], tail.swing_axis[1]),
+        (ChainField.SWING_AXIS_Z, head.swing_axis[2], tail.swing_axis[2]),
+        (ChainField.MAX_SWING, head.max_swing, tail.max_swing),
+        (ChainField.MIN_TWIST, head.min_twist, tail.min_twist),
+        (ChainField.MAX_TWIST, head.max_twist, tail.max_twist),
+        (ChainField.CAPSULE_HEAD_INSET, head.capsule_head_inset, tail.capsule_head_inset),
+        (ChainField.CAPSULE_TAIL_INSET, head.capsule_tail_inset, tail.capsule_tail_inset),
     )
-    result = {name: _curve_value(getattr(head, name), getattr(tail, name), s, head.interpolation) for name in scalar_names}
-    for name in ("inverse_inertia", "xyz_lower", "xyz_upper", "swing_axis"):
-        source = head.inertia_scale if name == "inverse_inertia" else getattr(head, name)
-        destination = tail.inertia_scale if name == "inverse_inertia" else getattr(tail, name)
-        result[name] = tuple(_curve_value(a, b, s, head.interpolation) for a, b in zip(source, destination))
-    result["angular_limit_mode"] = head.angular_limit_mode if s < 1.0 else tail.angular_limit_mode
-    return result
-
-
-def _curve_value(head: float, tail: float, s: float, interpolation) -> float:
-    return ParameterCurve((CurvePoint(0.0, head), CurvePoint(1.0, tail)), interpolation).sample(s)
+    return tuple(
+        ChainFieldCurve(
+            field,
+            ParameterCurve((CurvePoint(0.0, start), CurvePoint(1.0, end)), head.interpolation),
+        )
+        for field, start, end in fields
+    )
 
 
 def _override_values(values: dict[str, object]) -> dict[str, object]:
@@ -138,9 +163,26 @@ def _override_values(values: dict[str, object]) -> dict[str, object]:
     return values
 
 
-def _binding(target_id: str | None, node: SkeletonBone, index: int) -> TargetBinding:
+def _binding(
+    explicit: TargetBinding | None,
+    target_id: str | None,
+    node: SkeletonBone,
+    index: int,
+    nodes: dict[str, SkeletonBone],
+) -> TargetBinding:
+    if explicit is not None:
+        return _resolve_bone_name(explicit, nodes)
     if target_id is not None:
-        return TargetBinding(TargetKind.BONE, target_id)
+        return _resolve_bone_name(TargetBinding(TargetKind.BONE, target_id), nodes)
     if index == 0 and node.parent_uuid is not None:
-        return TargetBinding(TargetKind.BONE, node.parent_uuid)
+        return _resolve_bone_name(TargetBinding(TargetKind.BONE, node.parent_uuid), nodes)
     return TargetBinding(TargetKind.OWN_ANIMATION, node.name)
+
+
+def _resolve_bone_name(binding: TargetBinding, nodes: dict[str, SkeletonBone]) -> TargetBinding:
+    if binding.kind is not TargetKind.BONE:
+        return binding
+    source = nodes.get(binding.name)
+    if source is None:
+        return binding
+    return TargetBinding(TargetKind.BONE, source.name, binding.local_anchor)

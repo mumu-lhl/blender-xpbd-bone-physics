@@ -12,7 +12,7 @@ from enum import Enum
 import math
 from typing import Iterable
 
-from .model import AngularLimitMode, CurveInterpolation
+from .model import AngularLimitMode, CurveInterpolation, TargetBinding
 
 
 class ValidationSeverity(str, Enum):
@@ -81,6 +81,7 @@ class ChainAuthoring:
     head_uuid: str | None = None
     tail_uuid: str | None = None
     target_id: str | None = None
+    target_binding: TargetBinding | None = None
     closed: bool = False
     override_bone_uuids: tuple[str, ...] = ()
     overrides: tuple["BoneOverride", ...] = ()
@@ -89,6 +90,8 @@ class ChainAuthoring:
         object.__setattr__(self, "bone_uuids", tuple(self.bone_uuids))
         object.__setattr__(self, "override_bone_uuids", tuple(self.override_bone_uuids))
         object.__setattr__(self, "overrides", tuple(self.overrides))
+        if self.target_binding is not None and not isinstance(self.target_binding, TargetBinding):
+            raise ValueError("target binding must be a TargetBinding")
 
 
 @dataclass(frozen=True, slots=True)

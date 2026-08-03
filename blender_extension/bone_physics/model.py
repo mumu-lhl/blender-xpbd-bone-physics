@@ -305,6 +305,32 @@ class BoneSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ChainBoneOverride:
+    """A concrete per-body replacement applied after chain-field sampling."""
+
+    body_id: int
+    values: tuple[tuple[str, object], ...]
+
+    def __post_init__(self) -> None:
+        _id("chain override body", self.body_id)
+        values = tuple((str(name), value) for name, value in self.values)
+        if not values or any(not name for name, _value in values):
+            raise ValueError("chain bone override requires named values")
+        if len({name for name, _value in values}) != len(values):
+            raise ValueError("chain bone override fields must be unique")
+        allowed = set(BoneSpec.__dataclass_fields__) - {
+            "id", "name", "parent_id", "joint_constraint_id", "angular_constraint_id",
+            "recovery_constraint_id", "collider_id", "rest_translation", "rest_rotation",
+            "local_head", "local_tail", "target_binding", "initial_translation",
+            "initial_rotation", "capsule_local_a", "capsule_local_b", "local_center_of_mass",
+        }
+        unknown = set(name for name, _value in values) - allowed
+        if unknown:
+            raise ValueError(f"unsupported chain bone override field {min(unknown)!r}")
+        object.__setattr__(self, "values", values)
+
+
+@dataclass(frozen=True, slots=True)
 class ChainSpec:
     id: str
     body_ids: tuple[int, ...]
@@ -314,6 +340,7 @@ class ChainSpec:
     angular_damping_curve: ParameterCurve | None = None
     radius_curve: ParameterCurve | None = None
     field_curves: tuple[ChainFieldCurve, ...] = ()
+    bone_overrides: tuple[ChainBoneOverride, ...] = ()
     attachment_constraint_id: int | None = None
     attachment_local_anchor: Vec3 | None = None
     attachment_target_local_anchor: Vec3 | None = None
@@ -345,6 +372,15 @@ class ChainSpec:
                 raise ValueError(f"duplicate chain field {item.field.name}")
             seen.add(item.field)
         object.__setattr__(self, "field_curves", field_curves)
+        bone_overrides = tuple(self.bone_overrides)
+        if any(not isinstance(item, ChainBoneOverride) for item in bone_overrides):
+            raise ValueError("chain bone overrides must contain ChainBoneOverride values")
+        override_ids = tuple(item.body_id for item in bone_overrides)
+        _reject_duplicates("chain override body", override_ids)
+        missing = set(override_ids) - set(self.body_ids)
+        if missing:
+            raise ValueError(f"chain override body {min(missing)} does not belong to the chain")
+        object.__setattr__(self, "bone_overrides", bone_overrides)
         _optional_id("attachment constraint", self.attachment_constraint_id)
         if self.attachment_local_anchor is not None:
             object.__setattr__(
