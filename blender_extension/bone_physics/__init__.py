@@ -36,11 +36,13 @@ def register() -> None:
     from .ui import register as register_ui
     from .viewport import register as register_viewport
     from .runtime_registry import BlenderRuntimeWorldFactory, configure_runtime, register_timer
+    from .translations import register_translations
 
     register_properties()
     register_operators()
     register_ui()
     register_viewport()
+    register_translations()
     configure_runtime(BlenderRuntimeWorldFactory())
     register_timer()
 
@@ -52,8 +54,10 @@ def unregister() -> None:
     from .ui import unregister as unregister_ui
     from .viewport import unregister as unregister_viewport
     from .runtime_registry import unregister_timer
+    from .translations import unregister_translations
 
     unregister_timer()
+    unregister_translations()
     unregister_viewport()
     unregister_ui()
     unregister_operators()
