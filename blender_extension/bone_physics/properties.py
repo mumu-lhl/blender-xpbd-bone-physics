@@ -94,7 +94,7 @@ class EndpointProperties(bpy.types.PropertyGroup):
 
 class ChainProperties(bpy.types.PropertyGroup):
     id: bpy.props.StringProperty(name="Chain ID", update=_chain_update)
-    stable_id: bpy.props.IntProperty(name="Stable ID", min=0, update=_chain_update)
+    stable_id: bpy.props.IntProperty(name="Stable ID", min=0, max=0x7FFFFFFF, update=_chain_update)
     head_uuid: bpy.props.StringProperty(name="Head Bone UUID", update=_chain_update)
     tail_uuid: bpy.props.StringProperty(name="Tail Bone UUID", update=_chain_update)
     target_id: bpy.props.StringProperty(name="Target ID", update=_chain_update)
@@ -104,7 +104,7 @@ class ChainProperties(bpy.types.PropertyGroup):
 
 class PhysicsSystemProperties(bpy.types.PropertyGroup):
     id: bpy.props.StringProperty(name="System ID", update=_system_update)
-    stable_id: bpy.props.IntProperty(name="Stable ID", min=0, update=_system_update)
+    stable_id: bpy.props.IntProperty(name="Stable ID", min=0, max=0x7FFFFFFF, update=_system_update)
     name: bpy.props.StringProperty(name="Name", update=_system_update)
     enabled: bpy.props.BoolProperty(name="Enabled", default=True, update=_system_update)
     head: bpy.props.PointerProperty(type=EndpointProperties)
@@ -115,7 +115,7 @@ class PhysicsSystemProperties(bpy.types.PropertyGroup):
 class ArmaturePhysicsProperties(bpy.types.PropertyGroup):
     schema_version: bpy.props.IntProperty(name="Schema Version", default=1, min=1, update=_armature_update)
     id: bpy.props.StringProperty(name="Armature ID", update=_armature_update)
-    next_stable_id: bpy.props.IntProperty(name="Next Stable ID", default=1, min=1, update=_armature_update)
+    next_stable_id: bpy.props.IntProperty(name="Next Stable ID", default=1, min=1, max=0x7FFFFFFF, update=_armature_update)
     gravity: bpy.props.FloatVectorProperty(name="Gravity", size=3, default=(0.0, -9.81, 0.0), update=_armature_update)
     fixed_dt: bpy.props.FloatProperty(name="Fixed Time Step", default=1.0 / 120.0, min=0.0, update=_armature_update)
     global_enabled: bpy.props.BoolProperty(name="Enable Physics", default=True, update=_armature_update)

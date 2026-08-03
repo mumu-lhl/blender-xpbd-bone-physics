@@ -1,12 +1,16 @@
 """Context-safe physics-system and selected-chain operators."""
 
-from __future__ import annotations
-
 import uuid
 
 import bpy
 
-from ..chain_discovery import BoneNode, BranchSelectionRequired, resolve_chain, validate_new_paths
+from ..chain_discovery import (
+    BoneNode,
+    BranchSelectionRequired,
+    descendant_leaves,
+    resolve_chain,
+    validate_new_paths,
+)
 
 
 SYSTEM_TEMPLATES = (
@@ -28,10 +32,24 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
+_MAX_RNA_STABLE_ID = 0x7FFFFFFF
+
+
 def _allocate_id(settings: bpy.types.PropertyGroup) -> int:
-    stable_id = settings.next_stable_id
-    settings.next_stable_id = 1 if stable_id == 0xFFFFFFFF else stable_id + 1
-    return stable_id
+    """Allocate a free positive RNA integer without reusing an occupied ID."""
+    used = {
+        item.stable_id
+        for system in settings.physics_systems
+        for item in (system, *system.chains)
+        if item.stable_id
+    }
+    candidate = settings.next_stable_id
+    while candidate in used:
+        candidate = 1 if candidate == _MAX_RNA_STABLE_ID else candidate + 1
+        if candidate == settings.next_stable_id:
+            raise ValueError("stable ID space is exhausted")
+    settings.next_stable_id = 1 if candidate == _MAX_RNA_STABLE_ID else candidate + 1
+    return candidate
 
 
 def _system_name(template: str) -> str:
@@ -76,14 +94,6 @@ def _copy_system(settings: bpy.types.PropertyGroup, source: bpy.types.PropertyGr
     destination.enabled = source.enabled
     _copy_endpoint(source.head, destination.head)
     _copy_endpoint(source.tail, destination.tail)
-    for source_chain in source.chains:
-        chain = destination.chains.add()
-        chain.id = _new_id()
-        chain.stable_id = _allocate_id(settings)
-        chain.head_uuid = source_chain.head_uuid
-        chain.tail_uuid = source_chain.tail_uuid
-        chain.target_id = source_chain.target_id
-        chain.closed = source_chain.closed
     return destination
 
 
@@ -178,21 +188,77 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
     bl_label = "Add Chains from Selected Bones"
     bl_options = {"REGISTER", "UNDO"}
 
+    def _tail_items(self, context: bpy.types.Context):
+        options = getattr(self, "_tail_options", ())
+        if not options:
+            armature = _active_armature(context)
+            if armature is not None:
+                selected = tuple(sorted(bone.name for bone in context.selected_pose_bones))
+                nodes = _nodes(armature)
+                branches = tuple(
+                    (head, descendant_leaves(nodes, head))
+                    for head in selected
+                    if len(descendant_leaves(nodes, head)) > 1
+                )
+                if len(branches) == 1:
+                    options = branches[0][1]
+        return tuple((tail, tail, "Descendant leaf") for tail in options)
+
+    tail_uuid: bpy.props.EnumProperty(name="Chain Tail", items=_tail_items)
+
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         armature = _active_armature(context)
         return armature is not None and armature.mode == "POSE" and bool(context.selected_pose_bones)
 
+    def invoke(self, context: bpy.types.Context, _event: bpy.types.Event) -> set[str]:
+        armature = _active_armature(context)
+        self._armature_pointer = armature.as_pointer()
+        self._selected_heads = tuple(sorted(bone.name for bone in context.selected_pose_bones))
+        nodes = _nodes(armature)
+        branches = tuple(
+            (head, descendant_leaves(nodes, head))
+            for head in self._selected_heads
+            if len(descendant_leaves(nodes, head)) > 1
+        )
+        if not branches:
+            return self.execute(context)
+        if len(branches) != 1:
+            self.report({"ERROR"}, "Select one branched chain head at a time")
+            return {"CANCELLED"}
+        self._branch_head, self._tail_options = branches[0]
+        self.tail_uuid = self._tail_options[0]
+        context.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
+
     def execute(self, context: bpy.types.Context) -> set[str]:
         armature = _active_armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        captured_pointer = getattr(self, "_armature_pointer", armature.as_pointer())
+        if armature.as_pointer() != captured_pointer:
+            self.report({"ERROR"}, "Active armature changed while choosing a chain tail")
+            return {"CANCELLED"}
         settings = armature.bone_physics
         if not settings.physics_systems:
             self.report({"ERROR"}, "Add a physics system before adding chains")
             return {"CANCELLED"}
         nodes = _nodes(armature)
-        selected = tuple(sorted((bone.name for bone in context.selected_pose_bones)))
+        selected = getattr(
+            self, "_selected_heads", tuple(sorted(bone.name for bone in context.selected_pose_bones))
+        )
         try:
-            new_paths = tuple(resolve_chain(nodes, head) for head in selected)
+            branch_head = getattr(self, "_branch_head", None)
+            if branch_head is None:
+                branches = tuple(
+                    head for head in selected if len(descendant_leaves(nodes, head)) > 1
+                )
+                if len(branches) == 1 and self.tail_uuid:
+                    branch_head = branches[0]
+            new_paths = tuple(
+                resolve_chain(nodes, head, self.tail_uuid if head == branch_head else None)
+                for head in selected
+            )
             existing_paths = tuple(
                 resolve_chain(nodes, chain.head_uuid, chain.tail_uuid)
                 for system in settings.physics_systems

@@ -10,10 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-try:
-    import bone_physics
-except ModuleNotFoundError:
-    from blender_extension import bone_physics
+from blender_extension import bone_physics
 
 
 def create_armature() -> bpy.types.Object:
@@ -36,8 +33,8 @@ def create_armature() -> bpy.types.Object:
 
 
 def select_pose_bones(armature: bpy.types.Object, names: tuple[str, ...]) -> None:
-    for bone in armature.data.bones:
-        bone.select_set(bone.name in names)
+    for bone in armature.pose.bones:
+        bone.select = bone.name in names
     armature.data.bones.active = armature.data.bones[names[0]]
 
 
@@ -63,8 +60,38 @@ try:
 
     assert bpy.ops.bone_physics.system_duplicate() == {"FINISHED"}
     assert len(settings.physics_systems) == 2
+    assert len(settings.physics_systems[1].chains) == 0
+
+    settings.next_stable_id = 0x7FFFFFFF
+    assert bpy.ops.bone_physics.system_add(name="Last signed ID") == {"FINISHED"}
+    assert bpy.ops.bone_physics.system_add(name="Wrapped ID") == {"FINISHED"}
+    stable_ids = [
+        system.stable_id
+        for system in settings.physics_systems
+    ] + [
+        chain.stable_id
+        for system in settings.physics_systems
+        for chain in system.chains
+    ]
+    assert len(stable_ids) == len(set(stable_ids))
+
+    bpy.ops.object.mode_set(mode="EDIT")
+    branch = armature.data.edit_bones.new("branch_root")
+    branch.head = (2.0, 0.0, 0.0)
+    branch.tail = (2.0, 1.0, 0.0)
+    for name, x in (("branch_left", 1.5), ("branch_right", 2.5)):
+        leaf = armature.data.edit_bones.new(name)
+        leaf.head = branch.tail
+        leaf.tail = (x, 2.0, 0.0)
+        leaf.parent = branch
+    bpy.ops.object.mode_set(mode="POSE")
+    select_pose_bones(armature, ("branch_root",))
+    assert bpy.ops.bone_physics.chain_add_selected(tail_uuid="branch_right") == {"FINISHED"}
+    assert settings.physics_systems[-1].chains[-1].head_uuid == "branch_root"
+    assert settings.physics_systems[-1].chains[-1].tail_uuid == "branch_right"
+
     assert bpy.ops.bone_physics.system_remove() == {"FINISHED"}
-    assert len(settings.physics_systems) == 1
+    assert len(settings.physics_systems) == 3
 finally:
     bone_physics.unregister()
 
