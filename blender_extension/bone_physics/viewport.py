@@ -68,7 +68,10 @@ def disable_overlay(area: object) -> None:
 def disable_all_overlays(*_unused: object) -> None:
     """Remove handlers on extension shutdown and after loading a file."""
     for handler in tuple(_DRAW_HANDLERS.values()):
-        bpy.types.SpaceView3D.draw_handler_remove(handler, "WINDOW")
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(handler, "WINDOW")
+        except (ReferenceError, RuntimeError):
+            continue
     _DRAW_HANDLERS.clear()
     _OVERLAY_LINES.clear()
 

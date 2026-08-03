@@ -113,6 +113,10 @@ class RuntimeRegistry:
             if self.spec_builder is None or scene is None or armature is None:
                 raise RuntimeError("runtime rebuild requires a world specification")
             spec = self.spec_builder(scene, armature)
+        # Publish fresh authoring issues before native construction so a
+        # factory/bridge failure cannot hide the validation result.
+        _clear_diagnostics(armature)
+        _publish_authoring_diagnostics(scene, armature)
         # Create first: a validation/native failure leaves the live world intact.
         replacement = self.factory.create(scene, armature, spec)
         previous = self._worlds.get(key)
@@ -120,8 +124,6 @@ class RuntimeRegistry:
         self._worlds[key] = RuntimeEntry(scene, armature, spec, replacement, bindings)
         if previous is not None:
             _destroy(previous.world)
-        _clear_diagnostics(armature)
-        _publish_authoring_diagnostics(scene, armature)
         _refresh_overlay(armature, spec)
         return replacement
 
