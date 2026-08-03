@@ -87,7 +87,9 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
         layout.operator("bone_physics.apply_endpoint_value", text="Batch Edit Selected Systems")
         curve_box = layout.box()
         curve_box.label(text="Per-Field Curves")
-        curve_box.operator("bone_physics.curve_point_add", icon="ADD")
+        curve_actions = curve_box.row(align=True)
+        curve_actions.operator("bone_physics.curve_point_add", text="", icon="ADD")
+        curve_actions.operator("bone_physics.curve_point_remove", text="", icon="REMOVE")
         if system.curve_points:
             curve_box.template_list(
                 "BONE_PHYSICS_UL_curve_points", "", system, "curve_points",

@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from blender_extension.bone_physics.authoring import (
     ArmatureAuthoring,
@@ -11,6 +12,7 @@ from blender_extension.bone_physics.authoring_adapter import (
     SkeletonBone,
     compile_authoring,
     field_curves_from_points,
+    physics_system_from_rna,
 )
 from blender_extension.bone_physics.model import AngularLimitMode
 from blender_extension.bone_physics.model import (
@@ -34,6 +36,47 @@ def skeleton():
 
 
 class AuthoringAdapterTests(unittest.TestCase):
+    def test_rna_snapshot_includes_curves_and_override_values(self):
+        def endpoint(**updates):
+            source = EndpointParameters(**updates)
+            values = {
+                name: getattr(source, name)
+                for name in EndpointParameters.__dataclass_fields__
+            }
+            values["angular_limit_mode"] = source.angular_limit_mode.name
+            values["interpolation"] = source.interpolation.name
+            return SimpleNamespace(**values)
+
+        curve = SimpleNamespace(
+            field="GRAVITY_SCALE", s=0.5, value=0.6, tangent=1.25
+        )
+        chain = SimpleNamespace(
+            id="chain", stable_id=20, head_uuid="root", tail_uuid="tip",
+            target_id="", closed=False, curve_points=(),
+        )
+        rna = SimpleNamespace(
+            id="system", stable_id=10, enabled=True,
+            head=endpoint(), tail=endpoint(gravity_scale=0.0),
+            interpolation="CUBIC_HERMITE", curve_points=(curve,), chains=(chain,),
+            overrides=(SimpleNamespace(bone_name="tip", parameters=endpoint(gravity_scale=0.2)),),
+        )
+
+        immutable = physics_system_from_rna(
+            rna, {"chain": ("root", "mid", "tip")}
+        )
+        self.assertEqual(
+            immutable.field_curves[0].curve.points[0],
+            CurvePoint(0.5, 0.6, 1.25),
+        )
+        self.assertEqual(dict(immutable.chains[0].overrides[0].values)["gravity_scale"], 0.2)
+        world = compile_authoring(
+            ArmatureAuthoring(id="armature", physics_systems=(immutable,)), skeleton()
+        )
+        compiled = compile_world_spec(world)
+        tip_id = next(bone.id for bone in world.bones if bone.name == "hair_tip")
+        tip_index = compiled.bodies["body_ids"].index(tip_id)
+        self.assertAlmostEqual(compiled.bodies["values"][tip_index * 46 + 20], 0.2)
+
     def test_custom_system_and_chain_hermite_curves_reach_compiler(self):
         system_curve = ChainFieldCurve(
             ChainField.GRAVITY_SCALE,

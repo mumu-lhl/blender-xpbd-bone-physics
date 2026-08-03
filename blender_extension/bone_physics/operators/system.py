@@ -288,6 +288,14 @@ def _selected_systems(settings: bpy.types.PropertyGroup) -> tuple[bpy.types.Prop
     return tuple(system for system in settings.physics_systems if system.selected)
 
 
+def _endpoint_values(settings, endpoint: str, field: str) -> tuple[object, ...]:
+    property_name = field.lower()
+    return tuple(
+        getattr(system.head if endpoint == "HEAD" else system.tail, property_name)
+        for system in _selected_systems(settings)
+    )
+
+
 class BONE_PHYSICS_OT_apply_endpoint_value(bpy.types.Operator):
     bl_idname = "bone_physics.apply_endpoint_value"
     bl_label = "Apply Endpoint Value"
@@ -308,6 +316,8 @@ class BONE_PHYSICS_OT_apply_endpoint_value(bpy.types.Operator):
         property_name = self.field.lower()
         self.layout.prop(self, "endpoint")
         self.layout.prop(self, "field")
+        if getattr(self, "_mixed", False):
+            self.layout.label(text="Selected systems have mixed values", icon="INFO")
         self.layout.prop(
             self,
             "enum_value" if property_name == "angular_limit_mode" else
@@ -316,6 +326,18 @@ class BONE_PHYSICS_OT_apply_endpoint_value(bpy.types.Operator):
         )
 
     def invoke(self, context: bpy.types.Context, _event: bpy.types.Event) -> set[str]:
+        values = _endpoint_values(
+            _active_armature(context).bone_physics, self.endpoint, self.field
+        )
+        if values:
+            self._mixed = any(value != values[0] for value in values[1:])
+            property_name = self.field.lower()
+            if property_name == "angular_limit_mode":
+                self.enum_value = values[0]
+            elif property_name in {"inertia_scale", "xyz_lower", "xyz_upper", "swing_axis"}:
+                self.vector_value = values[0]
+            else:
+                self.value = values[0]
         return context.window_manager.invoke_props_dialog(self)
 
     @classmethod
@@ -412,6 +434,27 @@ class BONE_PHYSICS_OT_override_add_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BONE_PHYSICS_OT_curve_point_remove(bpy.types.Operator):
+    bl_idname = "bone_physics.curve_point_remove"
+    bl_label = "Remove Curve Point"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        armature = _active_armature(context)
+        return armature is not None and bool(armature.bone_physics.physics_systems)
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        settings = _active_armature(context).bone_physics
+        system = settings.physics_systems[min(settings.active_system_index, len(settings.physics_systems) - 1)]
+        if not system.curve_points:
+            return {"CANCELLED"}
+        index = min(system.active_curve_point_index, len(system.curve_points) - 1)
+        system.curve_points.remove(index)
+        system.active_curve_point_index = min(index, max(0, len(system.curve_points) - 1))
+        return {"FINISHED"}
+
+
 CLASSES = (
     BONE_PHYSICS_OT_initialize,
     BONE_PHYSICS_OT_system_add,
@@ -420,5 +463,6 @@ CLASSES = (
     BONE_PHYSICS_OT_chain_add_selected,
     BONE_PHYSICS_OT_apply_endpoint_value,
     BONE_PHYSICS_OT_curve_point_add,
+    BONE_PHYSICS_OT_curve_point_remove,
     BONE_PHYSICS_OT_override_add_selected,
 )

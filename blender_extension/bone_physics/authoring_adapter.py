@@ -6,9 +6,17 @@ from dataclasses import dataclass
 import math
 from typing import Iterable
 
-from .authoring import ArmatureAuthoring, BoneOverride, EndpointParameters, StableIdAllocator
+from .authoring import (
+    ArmatureAuthoring,
+    BoneOverride,
+    ChainAuthoring,
+    EndpointParameters,
+    PhysicsSystemAuthoring,
+    StableIdAllocator,
+)
 from .model import (
     AnalyticColliderSpec,
+    AngularLimitMode,
     BoneSpec,
     ChainBoneOverride,
     ChainField,
@@ -46,6 +54,70 @@ def field_curves_from_points(
         )
         for field in sorted(grouped)
     )
+
+
+_ENDPOINT_NAMES = tuple(EndpointParameters.__dataclass_fields__)
+
+
+def physics_system_from_rna(
+    system: object,
+    chain_bone_uuids: dict[str, tuple[str, ...]],
+) -> PhysicsSystemAuthoring:
+    """Snapshot one Blender RNA system into immutable compiler input."""
+    head = _endpoint_from_rna(system.head)
+    tail = _endpoint_from_rna(system.tail)
+    system_curves = field_curves_from_points(system.curve_points, system.interpolation)
+    overrides = tuple(system.overrides)
+    chains = []
+    for chain in system.chains:
+        path = tuple(chain_bone_uuids[chain.id])
+        chain_overrides = tuple(
+            BoneOverride(item.bone_name, _override_values_from_rna(item.parameters))
+            for item in overrides
+            if item.bone_name in path
+        )
+        chains.append(
+            ChainAuthoring(
+                id=chain.id,
+                stable_id=chain.stable_id,
+                bone_uuids=path,
+                head_uuid=chain.head_uuid,
+                tail_uuid=chain.tail_uuid,
+                target_id=chain.target_id or None,
+                closed=chain.closed,
+                overrides=chain_overrides,
+                field_curves=field_curves_from_points(
+                    chain.curve_points, system.interpolation
+                ),
+            )
+        )
+    return PhysicsSystemAuthoring(
+        id=system.id,
+        stable_id=system.stable_id,
+        chains=tuple(chains),
+        head=head,
+        tail=tail,
+        enabled=system.enabled,
+        field_curves=system_curves,
+    )
+
+
+def _endpoint_from_rna(endpoint: object) -> EndpointParameters:
+    values = {name: getattr(endpoint, name) for name in _ENDPOINT_NAMES}
+    values["angular_limit_mode"] = AngularLimitMode[values["angular_limit_mode"]]
+    values["interpolation"] = CurveInterpolation[values["interpolation"]]
+    return EndpointParameters(**values)
+
+
+def _override_values_from_rna(endpoint: object) -> tuple[tuple[str, object], ...]:
+    values = _endpoint_from_rna(endpoint)
+    result = {
+        name: getattr(values, name)
+        for name in _ENDPOINT_NAMES
+        if name != "interpolation"
+    }
+    result["inverse_inertia"] = result.pop("inertia_scale")
+    return tuple(result.items())
 
 
 @dataclass(frozen=True, slots=True)
