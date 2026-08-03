@@ -91,6 +91,23 @@ class RuntimeRegistryTests(unittest.TestCase):
         registry.mark_validated(7)
         self.assertEqual(registry.flush_dirty(), ((7, "chains"),))
 
+    def test_failed_initial_compile_publishes_authoring_diagnostic(self):
+        settings = DiagnosticSettings()
+        armature = DiagnosticArmature(2, settings)
+
+        def build_spec(_scene, _armature):
+            raise ValueError("invalid chain")
+
+        registry = RuntimeRegistry(
+            factory=Factory(handles=[]), spec_builder=build_spec
+        )
+        with self.assertRaisesRegex(ValueError, "invalid chain"):
+            registry.ensure(Pointer(1), armature)
+
+        self.assertEqual(len(settings.diagnostic_items), 1)
+        self.assertEqual(settings.diagnostic_items[0].entity_kind, "runtime")
+        self.assertTrue(settings.diagnostic_items[0].code.startswith("authoring."))
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -102,3 +119,28 @@ class Pointer:
 
     def as_pointer(self):
         return self.value
+
+
+class DiagnosticItem:
+    pass
+
+
+class DiagnosticCollection(list):
+    def add(self):
+        item = DiagnosticItem()
+        self.append(item)
+        return item
+
+    def remove(self, index):
+        del self[index]
+
+
+class DiagnosticSettings:
+    def __init__(self):
+        self.diagnostic_items = DiagnosticCollection()
+
+
+class DiagnosticArmature(Pointer):
+    def __init__(self, value, settings):
+        super().__init__(value)
+        self.bone_physics = settings

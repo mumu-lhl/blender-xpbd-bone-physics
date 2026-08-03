@@ -112,7 +112,14 @@ class RuntimeRegistry:
         if spec is None:
             if self.spec_builder is None or scene is None or armature is None:
                 raise RuntimeError("runtime rebuild requires a world specification")
-            spec = self.spec_builder(scene, armature)
+            try:
+                spec = self.spec_builder(scene, armature)
+            except Exception:
+                # Preserve fresh authoring validation even when compilation
+                # itself fails before a spec exists.
+                _clear_diagnostics(armature)
+                _publish_authoring_diagnostics(scene, armature)
+                raise
         # Publish fresh authoring issues before native construction so a
         # factory/bridge failure cannot hide the validation result.
         _clear_diagnostics(armature)
@@ -253,7 +260,10 @@ def _clear_runtime_diagnostics(armature: object | None) -> None:
     if items is None:
         return
     for index in reversed(range(len(items))):
-        if str(getattr(items[index], "code", "")).startswith("runtime."):
+        if (
+            str(getattr(items[index], "code", "")).startswith("runtime.")
+            or getattr(items[index], "entity_kind", "") == "runtime"
+        ):
             items.remove(index)
 
 
