@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from blender_extension import bone_physics
+from blender_extension.bone_physics.operators.system import SYSTEM_TEMPLATES
 
 
 def create_armature() -> bpy.types.Object:
@@ -53,7 +54,7 @@ try:
     assert settings.physics_systems[0].name == "Hair"
     assert len(settings.physics_systems[0].chains) == 2
     assert settings.workspace == "SETUP"
-    assert {item.identifier for item in bpy.types.BONE_PHYSICS_OT_system_add.bl_rna.properties["template"].enum_items} == {
+    assert {identifier for identifier, _label, _description in SYSTEM_TEMPLATES} == {
         "LOOSE_HAIR", "EARS", "PONYTAIL", "SKIRT", "ACCESSORY", "BLANK"
     }
     assert bpy.types.BONE_PHYSICS_PT_root.bl_category == "Bone Physics"
