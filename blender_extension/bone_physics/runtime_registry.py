@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Callable, Protocol
 
+from .diagnostics import DiagnosticBindings, diagnostic_bindings, map_runtime_error
+
 
 _STRUCTURAL_CATEGORIES = frozenset({"chains", "constraints", "systems", "collisions", "world"})
 _DIRTY_LOCK = threading.Lock()
@@ -70,6 +72,7 @@ class RuntimeEntry:
     armature: object
     spec: object
     world: object
+    bindings: DiagnosticBindings = DiagnosticBindings()
 
 
 class RuntimeRegistry:
@@ -108,10 +111,12 @@ class RuntimeRegistry:
         # Create first: a validation/native failure leaves the live world intact.
         replacement = self.factory.create(scene, armature, spec)
         previous = self._worlds.get(key)
-        self._worlds[key] = RuntimeEntry(scene, armature, spec, replacement)
+        bindings = diagnostic_bindings(spec)
+        self._worlds[key] = RuntimeEntry(scene, armature, spec, replacement, bindings)
         if previous is not None:
             _destroy(previous.world)
         _clear_diagnostics(armature)
+        _refresh_overlay(armature, spec)
         return replacement
 
     def world(self, scene: object, armature: object):
@@ -122,7 +127,11 @@ class RuntimeRegistry:
         try:
             return self.world(scene, armature)
         except RuntimeError:
-            return self.rebuild(scene, armature)
+            try:
+                return self.rebuild(scene, armature)
+            except Exception as error:
+                _set_runtime_diagnostic(armature, error)
+                raise
 
     def world_by_key(self, key: tuple[int, int]):
         return self._worlds[key].world
@@ -175,7 +184,7 @@ class RuntimeRegistry:
                     except Exception as error:
                         entry.world.last_error = error
                         entry.world.paused = True
-                        _set_runtime_diagnostic(entry.armature, error)
+                        _set_runtime_diagnostic(entry.armature, error, entry.bindings)
         return result
 
     def _disable_entry(self, entry: RuntimeEntry) -> None:
@@ -189,6 +198,7 @@ class RuntimeRegistry:
             entry.world.evaluator.adapter.restore_animation_references(entry.scene, references)
         except Exception as error:
             entry.world.last_error = error
+            _set_runtime_diagnostic(entry.armature, error, entry.bindings)
         finally:
             self.remove(entry.scene, entry.armature)
 
@@ -229,18 +239,56 @@ def _clear_diagnostics(armature: object | None) -> None:
             items.remove(len(items) - 1)
 
 
-def _set_runtime_diagnostic(armature: object, error: Exception) -> None:
+def _set_runtime_diagnostic(
+    armature: object,
+    error: Exception,
+    bindings: DiagnosticBindings | None = None,
+) -> None:
     settings = getattr(armature, "bone_physics", None)
     items = getattr(settings, "diagnostic_items", None)
     if items is None:
         return
     _clear_diagnostics(armature)
+    values = _error_values(error)
+    if bindings is not None:
+        diagnostic = map_runtime_error(bindings, values)
+    else:
+        values["code"] = f"authoring.{type(error).__name__}"
+        diagnostic = map_runtime_error(
+            DiagnosticBindings(),
+            values,
+        )
     item = items.add()
-    item.code = f"runtime.{type(error).__name__}"
-    item.severity = "error"
-    item.entity_kind = "runtime"
-    item.entity_id = str(getattr(error, "args", ("runtime",))[0])
-    item.stable_id = 0
+    item.code = diagnostic.code
+    item.severity = diagnostic.severity
+    item.entity_kind = diagnostic.entity_kind
+    item.entity_id = diagnostic.entity_id
+    item.stable_id = diagnostic.stable_id
+    try:
+        item.object_name = str(getattr(error, "object_name", ""))
+    except AttributeError:
+        pass
+
+
+def _error_values(error: Exception) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for name in ("code", "severity", "body_id", "constraint_id", "collider_id", "mesh_id", "region_id"):
+        value = getattr(error, name, None)
+        if value is not None:
+            values[name] = value
+    if "code" not in values:
+        values["code"] = f"runtime.{type(error).__name__}"
+    values["message"] = str(error)
+    return values
+
+
+def _refresh_overlay(armature: object, spec: object, poses=None) -> None:
+    try:
+        from . import viewport
+
+        viewport.refresh_world_overlay(armature, spec, poses)
+    except (ImportError, ReferenceError, RuntimeError, AttributeError):
+        return
 
 
 def mark_dirty(owner_pointer: int, category: str) -> None:
@@ -285,9 +333,36 @@ def _timer_tick():
 
 def _frame_change_handler(scene, depsgraph) -> None:
     for entry in tuple(REGISTRY._worlds.values()):
-        if entry.scene != scene or not getattr(entry.armature.bone_physics, "global_enabled", True):
+        try:
+            enabled = getattr(entry.armature.bone_physics, "global_enabled", True)
+        except (ReferenceError, AttributeError):
             continue
-        entry.world.on_frame_change(scene, depsgraph)
+        if entry.scene != scene or not enabled:
+            continue
+        try:
+            result = entry.world.on_frame_change(scene, depsgraph)
+        except Exception as error:
+            _set_runtime_diagnostic(entry.armature, error, entry.bindings)
+            continue
+        error = getattr(result, "error", None)
+        if error is not None:
+            _set_runtime_diagnostic(entry.armature, error, entry.bindings)
+        elif getattr(result, "executed", False):
+            _clear_diagnostics(entry.armature)
+            poses = _runtime_poses(entry.world)
+            _refresh_overlay(entry.armature, entry.spec, poses)
+
+
+def _runtime_poses(world: object) -> dict[int, object] | None:
+    bridge = getattr(world, "bridge", None)
+    handle = getattr(world, "handle", None)
+    reader = getattr(bridge, "read_poses", None)
+    if reader is None or handle is None:
+        return None
+    try:
+        return dict(zip(getattr(world, "body_ids", ()), reader(handle, world.body_ids)))
+    except Exception:
+        return None
 
 
 def register_timer() -> None:

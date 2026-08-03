@@ -73,7 +73,31 @@ def diagnostic_bindings(config: object) -> DiagnosticBindings:
             )
             if constraint_id is not None
         }
+        # Attachment constraints have no BoneSpec-owned ID.  Cross-link IDs
+        # are generated as contiguous ranges; retain every generated ID so a
+        # native failure never loses its structural authoring location.
+        for chain in config.chains:
+            if chain.attachment_constraint_id is not None:
+                constraints[int(chain.attachment_constraint_id)] = DiagnosticOwner(
+                    "chain", str(chain.id)
+                )
+        for lattice in getattr(config, "cross_links", ()):
+            pairs = list(zip(lattice.chain_ids, lattice.chain_ids[1:]))
+            if lattice.closed:
+                pairs.append((lattice.chain_ids[-1], lattice.chain_ids[0]))
+            links_per_pair = len(lattice.samples) + (
+                2 * (len(lattice.samples) - 1) if lattice.diagonals else 0
+            )
+            for pair_index, pair in enumerate(pairs):
+                owner = DiagnosticOwner("chain", f"{pair[0]}:{pair[1]}")
+                start = int(lattice.first_constraint_id) + pair_index * links_per_pair
+                for generated_id in range(start, start + links_per_pair):
+                    constraints[generated_id] = owner
         colliders = {bone.collider_id: DiagnosticOwner("bone", bone.name) for bone in config.bones}
+        colliders.update({
+            collider.id: DiagnosticOwner("collider", str(collider.id))
+            for collider in getattr(config, "analytic_colliders", ())
+        })
         meshes = {surface.id: DiagnosticOwner("mesh", surface.object_name) for surface in config.collision_surfaces}
         return DiagnosticBindings(bodies, constraints, colliders, meshes)
     body_owner: dict[str, DiagnosticOwner] = {}

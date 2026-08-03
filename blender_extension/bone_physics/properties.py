@@ -116,7 +116,7 @@ def _overlay_update(
                     viewport.enable_overlay(area)
                 else:
                     viewport.disable_overlay(area)
-    except (AttributeError, ImportError, RuntimeError):
+    except (AttributeError, ImportError, ReferenceError, RuntimeError):
         return
 
 

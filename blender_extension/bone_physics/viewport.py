@@ -8,6 +8,8 @@ objects across redraws or file loads.
 from __future__ import annotations
 
 from collections.abc import Iterable
+import math
+from typing import Mapping
 
 import bpy
 
@@ -30,12 +32,19 @@ def set_overlay_lines(area: object, category: str, points: Iterable[Iterable[flo
     values = tuple(tuple(float(component) for component in point) for point in points)
     if len(values) % 2 or any(len(point) != 3 for point in values):
         raise ValueError("overlay lines require paired three-dimensional points")
-    _OVERLAY_LINES.setdefault(area.as_pointer(), {})[category] = values
+    try:
+        key = area.as_pointer()
+        _OVERLAY_LINES.setdefault(key, {})[category] = values
+    except (ReferenceError, AttributeError):
+        return
 
 
 def enable_overlay(area: object) -> None:
     """Register at most one post-view handler for a 3D View area."""
-    key = area.as_pointer()
+    try:
+        key = area.as_pointer()
+    except (ReferenceError, AttributeError):
+        return
     if key not in _DRAW_HANDLERS:
         _DRAW_HANDLERS[key] = bpy.types.SpaceView3D.draw_handler_add(
             _draw_overlay, (key,), "WINDOW", "POST_VIEW"
@@ -43,10 +52,16 @@ def enable_overlay(area: object) -> None:
 
 
 def disable_overlay(area: object) -> None:
-    key = area.as_pointer()
+    try:
+        key = area.as_pointer()
+    except (ReferenceError, AttributeError):
+        return
     handler = _DRAW_HANDLERS.pop(key, None)
     if handler is not None:
-        bpy.types.SpaceView3D.draw_handler_remove(handler, "WINDOW")
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(handler, "WINDOW")
+        except (ReferenceError, RuntimeError):
+            pass
     _OVERLAY_LINES.pop(key, None)
 
 
@@ -67,6 +82,96 @@ def unregister() -> None:
     disable_all_overlays()
     if disable_all_overlays in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(disable_all_overlays)
+
+
+def overlay_lines_for_world(spec: object, poses: Mapping[int, object] | None = None) -> dict[str, tuple[tuple[float, float, float], ...]]:
+    """Build bounded line snapshots from immutable world data and poses."""
+    categories = {name: [] for name in _COLORS}
+    bones = tuple(getattr(spec, "bones", ()))
+    poses = poses or {}
+    for bone in bones:
+        try:
+            start = _body_point(bone, getattr(bone, "local_head"), poses.get(bone.id))
+            end = _body_point(bone, getattr(bone, "local_tail"), poses.get(bone.id))
+            category = "dynamic" if float(getattr(bone, "inverse_mass", 0.0)) > 0.0 else "kinematic"
+            if not _valid_point(start) or not _valid_point(end):
+                categories["invalid"].extend(((0.0, 0.0, 0.0), (0.05, 0.0, 0.0)))
+            else:
+                categories[category].extend((start, end))
+        except (AttributeError, TypeError, ValueError):
+            categories["invalid"].extend(((0.0, 0.0, 0.0), (0.05, 0.0, 0.0)))
+    # Structural links are represented by rest-space chain samples.  Keeping
+    # these as line segments makes them safe to redraw even while RNA changes.
+    try:
+        from .parameter_builder import sample_chain_anchor
+        by_id = {bone.id: bone for bone in bones}
+        chains = {chain.id: chain for chain in getattr(spec, "chains", ())}
+        for lattice in getattr(spec, "cross_links", ()):
+            pairs = list(zip(lattice.chain_ids, lattice.chain_ids[1:]))
+            if lattice.closed:
+                pairs.append((lattice.chain_ids[-1], lattice.chain_ids[0]))
+            for left, right in pairs:
+                for sample in lattice.samples:
+                    first = sample_chain_anchor(chains[left], sample, by_id).world_anchor
+                    second = sample_chain_anchor(chains[right], sample, by_id).world_anchor
+                    categories["structural"].extend((first, second))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        categories["invalid"].extend(((0.0, 0.0, 0.0), (0.05, 0.05, 0.0)))
+    return {name: tuple(points) for name, points in categories.items()}
+
+
+def refresh_world_overlay(armature: object, spec: object, poses: Mapping[int, object] | None = None) -> None:
+    """Publish a new snapshot to every live 3D view for an armature."""
+    try:
+        import bpy as _bpy
+        settings = getattr(armature, "bone_physics", None)
+        if settings is not None and not getattr(settings, "show_viewport_overlays", False):
+            return
+        lines = overlay_lines_for_world(spec, poses)
+        for screen in tuple(_bpy.data.screens):
+            for area in tuple(screen.areas):
+                try:
+                    if area.type != "VIEW_3D":
+                        continue
+                    enable_overlay(area)
+                    for category, points in lines.items():
+                        set_overlay_lines(area, category, points)
+                except (ReferenceError, AttributeError, RuntimeError):
+                    continue
+    except (ImportError, ReferenceError, AttributeError, RuntimeError):
+        return
+
+
+def _body_point(bone: object, local: Iterable[float], pose: object | None) -> tuple[float, float, float]:
+    if pose is None:
+        origin = tuple(float(value) for value in bone.rest_translation)
+        rotation = tuple(float(value) for value in bone.rest_rotation)
+    else:
+        origin = tuple(float(value) for value in pose.translation)
+        rotation = tuple(float(value) for value in pose.rotation)
+    return _add(origin, _rotate(rotation, tuple(float(value) for value in local)))
+
+
+def _add(left: tuple[float, float, float], right: tuple[float, float, float]) -> tuple[float, float, float]:
+    return tuple(a + b for a, b in zip(left, right))  # type: ignore[return-value]
+
+
+def _rotate(quaternion: tuple[float, float, float, float], vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z, w = quaternion
+    vx, vy, vz = vector
+    # q * v * q^-1, expanded to avoid Blender mathutils dependencies.
+    tx = 2.0 * (y * vz - z * vy)
+    ty = 2.0 * (z * vx - x * vz)
+    tz = 2.0 * (x * vy - y * vx)
+    return (
+        vx + w * tx + (y * tz - z * ty),
+        vy + w * ty + (z * tx - x * tz),
+        vz + w * tz + (x * ty - y * tx),
+    )
+
+
+def _valid_point(point: tuple[float, float, float]) -> bool:
+    return len(point) == 3 and all(math.isfinite(value) for value in point)
 
 
 def _draw_overlay(key: int) -> None:
