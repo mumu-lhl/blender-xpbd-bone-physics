@@ -167,9 +167,24 @@ class RuntimeRegistry:
             raise RuntimeError("no runtime world is configured for this armature") from error
 
     def remove(self, scene: object, armature: object) -> None:
-        entry = self._worlds.pop(self.key(scene, armature), None)
+        try:
+            key = self.key(scene, armature)
+        except (AttributeError, ReferenceError, RuntimeError, TypeError):
+            for entry in tuple(self._worlds.values()):
+                if entry.armature is armature:
+                    self._discard_entry(entry)
+            return
+        entry = self._worlds.pop(key, None)
         if entry is not None:
             _destroy(entry.world)
+
+    def _discard_entry(self, entry: RuntimeEntry) -> None:
+        """Drop a world whose Blender RNA owner has become invalid."""
+        for key, current in tuple(self._worlds.items()):
+            if current is entry:
+                self._worlds.pop(key, None)
+                _destroy(entry.world)
+                return
 
     def mark_dirty(self, owner_pointer: int, category: str) -> None:
         mark_dirty(owner_pointer, category)
@@ -195,9 +210,17 @@ class RuntimeRegistry:
         result = tuple(sorted(set(ready)))
         for owner_pointer, _category in result:
             for entry in tuple(self._worlds.values()):
-                pointer = getattr(entry.armature, "as_pointer", lambda: None)()
+                try:
+                    pointer = getattr(entry.armature, "as_pointer", lambda: None)()
+                except (AttributeError, ReferenceError, RuntimeError, TypeError):
+                    self._discard_entry(entry)
+                    continue
                 if pointer == owner_pointer:
-                    settings = getattr(entry.armature, "bone_physics", None)
+                    try:
+                        settings = getattr(entry.armature, "bone_physics", None)
+                    except (AttributeError, ReferenceError, RuntimeError):
+                        self._discard_entry(entry)
+                        continue
                     if settings is not None and not getattr(settings, "global_enabled", True):
                         self._disable_entry(entry)
                         continue
@@ -205,9 +228,12 @@ class RuntimeRegistry:
                         # Re-read RNA and compile it now; never recycle a stale spec.
                         self.rebuild(entry.scene, entry.armature)
                     except Exception as error:
-                        entry.world.last_error = error
-                        entry.world.paused = True
-                        _set_runtime_diagnostic(entry.armature, error, entry.bindings)
+                        try:
+                            entry.world.last_error = error
+                            entry.world.paused = True
+                            _set_runtime_diagnostic(entry.armature, error, entry.bindings)
+                        except (AttributeError, ReferenceError, RuntimeError):
+                            self._discard_entry(entry)
         return result
 
     def _disable_entry(self, entry: RuntimeEntry) -> None:
@@ -409,7 +435,10 @@ def _frame_change_handler(scene, depsgraph) -> None:
     for entry in tuple(REGISTRY._worlds.values()):
         try:
             enabled = getattr(entry.armature.bone_physics, "global_enabled", True)
-        except (ReferenceError, AttributeError):
+        except ReferenceError:
+            REGISTRY._discard_entry(entry)
+            continue
+        except AttributeError:
             continue
         if entry.scene != scene or not enabled:
             continue

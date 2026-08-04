@@ -74,6 +74,19 @@ class RuntimeRegistryTests(unittest.TestCase):
 
         self.assertEqual(world.handle, 10)
         self.assertEqual(registry.world(scene, armature), world)
+
+    def test_flush_dirty_discards_removed_blender_armatures(self):
+        registry = RuntimeRegistry(factory=Factory(handles=[10]))
+        scene, armature = Pointer(1), Pointer(2)
+        registry.rebuild(scene, armature, valid_spec())
+        entry = registry._worlds[(1, 2)]
+        entry.armature = RemovedPointer()
+        registry.mark_dirty(2, "parameters")
+
+        registry.flush_dirty()
+
+        self.assertEqual(registry._worlds, {})
+        self.assertTrue(entry.world.destroyed)
     def test_failed_rebuild_keeps_previous_valid_world(self):
         registry = RuntimeRegistry(factory=Factory(handles=[10, ValueError("bad config")]))
         registry.rebuild(scene_id=1, armature_id=2, spec=valid_spec())
@@ -143,6 +156,11 @@ class Pointer:
 
     def as_pointer(self):
         return self.value
+
+
+class RemovedPointer:
+    def as_pointer(self):
+        raise ReferenceError("StructRNA of type Object has been removed")
 
 
 class DiagnosticItem:
