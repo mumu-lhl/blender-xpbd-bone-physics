@@ -19,11 +19,17 @@ from .diagnostics import (
     diagnostic_bindings,
     map_runtime_error,
 )
+from .native import NATIVE_API_VERSION, load_native
 
 
 _STRUCTURAL_CATEGORIES = frozenset({"chains", "constraints", "systems", "collisions", "world"})
 _DIRTY_LOCK = threading.Lock()
 _DIRTY: set[tuple[int, str, float]] = set()
+
+
+def _runtime_native():
+    """Load and validate the packaged solver before constructing a world."""
+    return load_native(NATIVE_API_VERSION)
 
 
 class RuntimeWorldFactory(Protocol):
@@ -34,7 +40,6 @@ class BlenderRuntimeWorldFactory:
     """Construct one native-backed world from a freshly compiled RNA spec."""
 
     def create(self, scene: object, armature: object, spec: object) -> object:
-        from .native import get_native
         from .parameter_builder import compile_world_spec
         from .pose_writer import PoseWriter
         from .prephysics_eval import PrePhysicsEvaluator
@@ -46,7 +51,7 @@ class BlenderRuntimeWorldFactory:
         bone_names = {bone.id: bone.name for bone in spec.bones}
         adapter = BlenderSceneAdapter(armature.name, bone_names)
         bridge = NativeRuntimeBridge(
-            get_native(), compiled, spec.bones, fixed_dt=spec.fixed_dt
+            _runtime_native(), compiled, spec.bones, fixed_dt=spec.fixed_dt
         )
         handle = bridge.create_world()
 

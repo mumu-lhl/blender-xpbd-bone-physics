@@ -1,6 +1,9 @@
 import unittest
 import ast
 from pathlib import Path
+import sys
+from types import SimpleNamespace
+from unittest import mock
 
 from blender_extension.bone_physics.authoring import ValidationIssue, ValidationSeverity
 from blender_extension.bone_physics.translations import (
@@ -12,6 +15,24 @@ from blender_extension.bone_physics.translations import (
 
 
 class TranslationTests(unittest.TestCase):
+    def test_translate_supports_blender_positional_context_api(self):
+        calls = []
+
+        def pgettext_iface(message, context):
+            calls.append((message, context))
+            return "translated"
+
+        fake_bpy = SimpleNamespace(
+            app=SimpleNamespace(
+                translations=SimpleNamespace(pgettext_iface=pgettext_iface)
+            )
+        )
+        from blender_extension.bone_physics import translations
+
+        with mock.patch.dict(sys.modules, {"bpy": fake_bpy}):
+            self.assertEqual(translations._translate("Bone Physics"), "translated")
+        self.assertEqual(calls, [("Bone Physics", "*")])
+
     def test_every_critical_message_has_simplified_chinese_translation(self):
         missing = critical_message_ids() - translated_message_ids("zh_HANS")
 

@@ -190,9 +190,21 @@ def _translate(message: str, *, tooltip: bool = False) -> str:
     try:
         import bpy
         method = bpy.app.translations.pgettext_tip if tooltip else bpy.app.translations.pgettext_iface
-        return method(message, context=CONTEXT)
+        # Blender 5.2 accepts the translation context positionally; older
+        # versions exposed a ``context=`` keyword.  Translation must never
+        # turn an operator error into a second traceback.
+        for args, kwargs in (
+            ((message, CONTEXT), {}),
+            ((message,), {"context": CONTEXT}),
+            ((message,), {}),
+        ):
+            try:
+                return method(*args, **kwargs)
+            except TypeError:
+                continue
     except (AttributeError, ImportError):
-        return message
+        pass
+    return message
 
 
 def format_message(message: str, /, **arguments: object) -> str:

@@ -18,6 +18,9 @@ class NativeVersionError(RuntimeError):
     """The packaged Python and native APIs are incompatible."""
 
 
+NATIVE_API_VERSION = 1
+
+
 @runtime_checkable
 class NativeModule(Protocol):
     def native_api_version(self) -> int: ...

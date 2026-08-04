@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from blender_extension.bone_physics.authoring import ValidationIssue, ValidationSeverity
+from blender_extension.bone_physics import runtime_registry
 from blender_extension.bone_physics.runtime_registry import RuntimeRegistry
 
 
@@ -38,6 +40,12 @@ def invalid_spec():
 
 
 class RuntimeRegistryTests(unittest.TestCase):
+    def test_runtime_native_is_validated_before_world_creation(self):
+        fake_native = object()
+        with mock.patch.object(runtime_registry, "load_native", return_value=fake_native) as loader:
+            self.assertIs(runtime_registry._runtime_native(), fake_native)
+        loader.assert_called_once_with(runtime_registry.NATIVE_API_VERSION)
+
     def test_dirty_rebuild_compiles_a_fresh_spec(self):
         built = []
 
