@@ -18,6 +18,8 @@ import struct
 from pathlib import Path
 from typing import Any, Mapping
 
+from .model import PI_EPSILON
+
 
 PRESET_KIND = "bone_parameters"
 SCHEMA_VERSION = 1
@@ -338,7 +340,10 @@ def _endpoint(value: object, label: str) -> dict[str, Any]:
             if field == "restitution" and number > 1.0:
                 raise PresetError(f"{label}.restitution must not exceed 1")
             if field in {"max_swing", "min_twist", "max_twist"} and abs(number) > math.pi:
-                raise PresetError(f"{label}.{field} must be within [-pi, pi]")
+                if abs(number) <= math.pi + PI_EPSILON:
+                    number = math.copysign(math.pi, number)
+                else:
+                    raise PresetError(f"{label}.{field} must be within [-pi, pi]")
             result[field] = number
     if any(lower > upper for lower, upper in zip(result["xyz_lower"], result["xyz_upper"])):
         raise PresetError(f"{label}.xyz_lower must not exceed xyz_upper")

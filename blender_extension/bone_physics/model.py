@@ -13,6 +13,7 @@ Quat = tuple[float, float, float, float]
 ZERO3: Vec3 = (0.0, 0.0, 0.0)
 ONE3: Vec3 = (1.0, 1.0, 1.0)
 IDENTITY_QUAT: Quat = (0.0, 0.0, 0.0, 1.0)
+PI_EPSILON = 1.0e-6
 
 
 class CurveInterpolation(IntEnum):
@@ -245,6 +246,12 @@ class BoneSpec:
         )
         object.__setattr__(self, "initial_translation", initial_translation)
         object.__setattr__(self, "initial_rotation", initial_rotation)
+        for field_name in ("max_swing", "min_twist", "max_twist"):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_pi_bound(field_name, getattr(self, field_name)),
+            )
         capsule_a = self.local_head if self.capsule_local_a is None else self.capsule_local_a
         capsule_b = self.local_tail if self.capsule_local_b is None else self.capsule_local_b
         object.__setattr__(self, "capsule_local_a", _vec3("capsule_local_a", capsule_a))
@@ -638,6 +645,26 @@ def _nonnegative(name: str, value: float) -> None:
     _finite_values(name, (value,))
     if value < 0.0:
         raise ValueError(f"{name} must be nonnegative")
+
+
+def _normalize_pi_bound(name: str, value: float) -> float:
+    """Accept single-precision Blender rounding at the mathematical π bound."""
+    value = float(value)
+    _finite_values(name, (value,))
+    display_name = {
+        "max_swing": "maximum swing",
+        "min_twist": "minimum twist",
+        "max_twist": "maximum twist",
+    }.get(name, name)
+    if value > math.pi:
+        if value <= math.pi + PI_EPSILON:
+            return math.pi
+        raise ValueError(f"{display_name} must not exceed pi")
+    if value < -math.pi:
+        if value >= -math.pi - PI_EPSILON:
+            return -math.pi
+        raise ValueError(f"{display_name} must not be less than -pi")
+    return value
 
 
 def _u32(name: str, value: int) -> None:

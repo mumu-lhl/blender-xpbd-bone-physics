@@ -109,6 +109,32 @@ class ModelValidationTests(unittest.TestCase):
         self.assertEqual(locked.xyz_lower[0], locked.xyz_upper[0])
         self.assertEqual(locked.xyz_lower[2], locked.xyz_upper[2])
 
+    def test_float32_rounding_at_pi_is_normalized(self):
+        rounded_pi = math.nextafter(math.pi, math.inf)
+        spec = BoneSpec(
+            id=1,
+            name="rounded_pi",
+            local_head=(0.0, 0.0, 0.0),
+            local_tail=(0.0, 1.0, 0.0),
+            max_swing=rounded_pi,
+            min_twist=-rounded_pi,
+            max_twist=rounded_pi,
+        )
+
+        self.assertEqual(spec.max_swing, math.pi)
+        self.assertEqual(spec.min_twist, -math.pi)
+        self.assertEqual(spec.max_twist, math.pi)
+
+    def test_angle_limit_beyond_float32_rounding_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "maximum swing"):
+            BoneSpec(
+                id=1,
+                name="bad_swing",
+                local_head=(0.0, 0.0, 0.0),
+                local_tail=(0.0, 1.0, 0.0),
+                max_swing=math.pi + 1.0e-4,
+            )
+
     def test_cross_links_require_explicit_existing_chains(self):
         chain = ChainSpec(id="left", body_ids=(1,))
         link = CrossLinkSpec(

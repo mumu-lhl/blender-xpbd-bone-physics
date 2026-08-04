@@ -18,6 +18,7 @@ from .model import (
     ChainFieldCurve,
     CrossLinkSpec,
     CurveInterpolation,
+    PI_EPSILON,
     TargetBinding,
 )
 
@@ -515,7 +516,7 @@ def _scalar_issues(config: ArmatureAuthoring) -> list[ValidationIssue]:
                 issues.append(_issue("parameter.range.inverted", ValidationSeverity.ERROR, entity_ids, (("field", "twist"),)))
             if _finite(endpoint.radius) and endpoint.radius == 0.0:
                 issues.append(_issue("parameter.scalar.zero", ValidationSeverity.ERROR, entity_ids, (("field", "radius"),)))
-            if _finite(endpoint.max_swing) and endpoint.max_swing > math.pi:
+            if _finite(endpoint.max_swing) and endpoint.max_swing > math.pi + PI_EPSILON:
                 issues.append(_issue("parameter.range.exceeds_limit", ValidationSeverity.ERROR, entity_ids, (("field", "max_swing"), ("limit", math.pi))))
             if _finite(endpoint.radius) and endpoint.radius > 0.5:
                 issues.append(_issue("collision.radius.suspicious", ValidationSeverity.WARNING, entity_ids, (("radius", endpoint.radius),)))

@@ -139,6 +139,25 @@ class AuthoringTests(unittest.TestCase):
         zero_config = replace(config, physics_systems=(replace(config.physics_systems[0], head=zero_radius),))
         self.assertIn("parameter.scalar.zero", {issue.code for issue in validate_authoring(zero_config)})
 
+    def test_validation_accepts_blender_float32_pi_rounding(self):
+        rounded_pi = 3.1415927410125732
+        config = armature_with_chains(("hair", ("root",)))
+        endpoint = EndpointParameters(max_swing=rounded_pi, max_twist=rounded_pi)
+        config = replace(
+            config,
+            physics_systems=(replace(config.physics_systems[0], head=endpoint, tail=endpoint),),
+        )
+
+        issues = validate_authoring(config)
+
+        self.assertFalse(
+            any(
+                issue.code == "parameter.range.exceeds_limit"
+                and dict(issue.arguments).get("field") == "max_swing"
+                for issue in issues
+            )
+        )
+
     def test_validation_warns_for_redundant_constraints_and_suspicious_weights(self):
         config = ArmatureAuthoring(
             id="armature",

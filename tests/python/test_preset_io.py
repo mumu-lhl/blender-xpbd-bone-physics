@@ -106,6 +106,22 @@ class PresetIoTests(unittest.TestCase):
             self.assertTrue(path.read_text("utf-8").endswith("\n"))
             self.assertEqual(json.loads(path.read_text("utf-8"))["name"], "Soft Hair")
 
+    def test_parameter_preset_accepts_blender_float32_pi_rounding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rounded-pi.json"
+            preset = parameter_preset("Rounded Pi")
+            rounded_pi = 3.1415927410125732
+            preset["head"]["max_swing"] = rounded_pi  # type: ignore[index]
+            preset["head"]["min_twist"] = -rounded_pi  # type: ignore[index]
+            preset["head"]["max_twist"] = rounded_pi  # type: ignore[index]
+            save_parameter_preset(path, preset)
+
+            loaded = load_parameter_preset(path)
+
+            self.assertEqual(loaded["head"]["max_swing"], 3.141592653589793)
+            self.assertEqual(loaded["head"]["min_twist"], -3.141592653589793)
+            self.assertEqual(loaded["head"]["max_twist"], 3.141592653589793)
+
     def test_unknown_newer_schema_is_rejected_without_changing_caller_data(self):
         before = endpoint_parameters()
         with tempfile.TemporaryDirectory() as directory:
