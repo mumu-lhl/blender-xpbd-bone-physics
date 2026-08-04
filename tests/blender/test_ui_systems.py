@@ -58,6 +58,9 @@ try:
         "LOOSE_HAIR", "EARS", "PONYTAIL", "SKIRT", "ACCESSORY", "BLANK"
     }
     assert bpy.types.BONE_PHYSICS_PT_root.bl_category == "Bone Physics"
+    bpy.context.view_layer.objects.active = None
+    assert bpy.types.BONE_PHYSICS_PT_root.poll(bpy.context)
+    bpy.context.view_layer.objects.active = armature
 
     assert bpy.ops.bone_physics.system_duplicate() == {"FINISHED"}
     assert len(settings.physics_systems) == 2

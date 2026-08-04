@@ -43,6 +43,7 @@ _ISSUE_MESSAGES = {
 
 _UI_MESSAGES = {
     "Bone Physics",
+    "Select an armature to configure Bone Physics.",
     "Parameters",
     "Runtime",
     "Structural Constraints",
@@ -118,7 +119,7 @@ _CRITICAL_OPERATOR_LABELS = frozenset({
 })
 
 _ZH_HANS = {
-    "Bone Physics": "骨骼物理", "Parameters": "参数", "Runtime": "运行时", "Structural Constraints": "结构约束",
+    "Bone Physics": "骨骼物理", "Select an armature to configure Bone Physics.": "请选择一个骨架以配置骨骼物理。", "Parameters": "参数", "Runtime": "运行时", "Structural Constraints": "结构约束",
     "Collision Resources": "碰撞资源", "Diagnostics": "诊断", "Validate and Rebuild": "验证并重建",
     "Reset Physics Bones": "重置物理骨骼", "Enable Physics": "启用物理", "Pause or Resume Physics": "暂停或恢复物理",
     "Isolate Armature Physics": "隔离骨架物理", "Initialize Physics Configuration": "初始化物理配置",

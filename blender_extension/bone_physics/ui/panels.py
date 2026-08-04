@@ -16,6 +16,11 @@ _GROUP_FIELDS = {
 }
 
 
+def _active_armature(context: bpy.types.Context) -> bpy.types.Object | None:
+    obj = getattr(context, "object", None)
+    return obj if obj is not None and obj.type == "ARMATURE" else None
+
+
 def _draw_endpoint_group(layout: bpy.types.UILayout, system: bpy.types.PropertyGroup, group: str) -> None:
     if not getattr(system, group):
         return
@@ -35,11 +40,18 @@ class BONE_PHYSICS_PT_root(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        return context.object is not None and context.object.type == "ARMATURE"
+        # Keep the Bone Physics tab discoverable even before an armature is
+        # selected.  Child panels and operators still require armature data.
+        del context
+        return True
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
-        settings = context.object.bone_physics
+        armature = _active_armature(context)
+        if armature is None:
+            layout.label(text="Select an armature to configure Bone Physics.", icon="ARMATURE_DATA")
+            return
+        settings = armature.bone_physics
         layout.prop(settings, "global_enabled")
         layout.prop(settings, "workspace", expand=True)
         layout.operator("bone_physics.initialize", icon="SETTINGS")
@@ -61,7 +73,7 @@ class BONE_PHYSICS_PT_root(bpy.types.Panel):
         column.operator("bone_physics.system_remove", text="", icon="REMOVE")
         if not settings.physics_systems:
             layout.label(text="No physics systems. Add one to begin.")
-        elif context.object.mode == "POSE":
+        elif armature.mode == "POSE":
             layout.operator("bone_physics.chain_add_selected", icon="BONE_DATA")
         else:
             layout.label(text="Enter Pose Mode to add chains from selected bones.")
@@ -78,7 +90,8 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        return BONE_PHYSICS_PT_root.poll(context) and bool(context.object.bone_physics.physics_systems)
+        armature = _active_armature(context)
+        return armature is not None and bool(armature.bone_physics.physics_systems)
 
     def draw(self, context: bpy.types.Context) -> None:
         settings = context.object.bone_physics
@@ -159,7 +172,7 @@ class BONE_PHYSICS_PT_runtime(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        return BONE_PHYSICS_PT_root.poll(context)
+        return _active_armature(context) is not None
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
@@ -235,7 +248,7 @@ class BONE_PHYSICS_PT_collision_resources(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        return BONE_PHYSICS_PT_root.poll(context)
+        return _active_armature(context) is not None
 
     def draw(self, context: bpy.types.Context) -> None:
         settings = context.object.bone_physics
@@ -297,7 +310,7 @@ class BONE_PHYSICS_PT_diagnostics(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        return BONE_PHYSICS_PT_root.poll(context)
+        return _active_armature(context) is not None
 
     def draw(self, context: bpy.types.Context) -> None:
         settings = context.object.bone_physics
