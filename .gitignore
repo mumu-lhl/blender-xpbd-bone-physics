@@ -1,4 +1,6 @@
 target/
 artifacts/
+dist/
+blender_extension/bone_physics/native/
 __pycache__/
 *.py[cod]

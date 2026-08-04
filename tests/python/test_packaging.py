@@ -4,6 +4,7 @@ import unittest
 from zipfile import ZipFile
 from pathlib import Path
 
+from scripts.install_native import install_native
 from scripts.package_extension import package
 from scripts.verify_package import verify
 
@@ -48,6 +49,46 @@ class PackagingTests(unittest.TestCase):
             package(root, archive)
             with self.assertRaisesRegex(ValueError, "native"):
                 verify(archive, expected_platform="windows-x86_64")
+
+    def test_install_native_extracts_wheel_and_removes_stale_platform_binary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            extension = root / "blender_extension"
+            (extension / "bone_physics").mkdir(parents=True)
+            wheel = root / "bone_physics_native.whl"
+            with ZipFile(wheel, "w") as archive:
+                archive.writestr("bone_physics_native.abi3.so", b"new-native")
+            destination = extension / "bone_physics" / "native" / "linux-x86_64"
+            destination.mkdir(parents=True)
+            (destination / "bone_physics_native.old.so").write_bytes(b"old-native")
+
+            installed = install_native(extension, wheel, platform="linux-x86_64")
+
+            self.assertEqual(installed.read_bytes(), b"new-native")
+            self.assertEqual(
+                sorted(path.name for path in destination.iterdir()),
+                ["bone_physics_native.abi3.so"],
+            )
+
+    def test_package_excludes_source_tree_native_copy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            extension = root / "blender_extension"
+            package_root = extension / "bone_physics"
+            package_root.mkdir(parents=True)
+            (extension / "blender_manifest.toml").write_text("version = \"0.1.0\"\n", encoding="utf-8")
+            native_dir = package_root / "native" / "linux-x86_64"
+            native_dir.mkdir(parents=True)
+            (native_dir / "bone_physics_native.source.so").write_bytes(b"source-native")
+            native = root / "bone_physics_native.so"
+            native.write_bytes(b"packaged-native")
+            archive = root / "package.zip"
+
+            package(root, archive, native=native, platform="linux-x86_64")
+
+            with ZipFile(archive) as zipped:
+                native_names = [name for name in zipped.namelist() if name.startswith("native/")]
+            self.assertEqual(native_names, ["native/linux-x86_64/bone_physics_native.so"])
 
     def test_distribution_contains_ui_runtime_and_bundled_presets_only(self):
         """A packaged extension keeps the complete authoring surface, not user state."""

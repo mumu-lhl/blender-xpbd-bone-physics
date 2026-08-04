@@ -19,6 +19,27 @@ just build-native
 This writes the abi3 wheel to `target/wheels/`. Set `MATURIN` to override
 the default `uv tool run` command when using a locally installed maturin.
 
+For the VS Code Blender development workflow, copy the built native module
+into the source extension directory:
+
+```bash
+just install-native
+```
+
+This installs it under `blender_extension/bone_physics/native/linux-x86_64/`.
+Set `BLENDER_EXTENSION_DIR` when the VS Code launcher uses another source
+directory, and set `NATIVE_PLATFORM` for another supported platform.
+
+To create the final self-contained extension archive, including its checksum
+and package report, run:
+
+```bash
+just package-extension
+```
+
+The archive is written to `dist/bone_physics-linux-x86_64.zip`. Both commands
+use the wheel in `target/wheels/` produced by `just build-native`.
+
 Use `scripts/package_extension.py` to create a normalized archive and
 `scripts/verify_package.py` to verify its checksum, manifest, ordering, and
 platform-native module. `scripts/check_native_deps.py` records dynamic-library
