@@ -29,6 +29,9 @@ just install-native
 This installs it under `blender_extension/bone_physics/native/linux-x86_64/`.
 Set `BLENDER_EXTENSION_DIR` when the VS Code launcher uses another source
 directory, and set `NATIVE_PLATFORM` for another supported platform.
+When loading the source tree directly, select `blender_extension/` as the
+extension directory; its root entry point forwards Blender's `register()` and
+`unregister()` lifecycle calls to the add-on package.
 
 To create the final self-contained extension archive, including its checksum
 and package report, run:

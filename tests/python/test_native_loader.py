@@ -8,6 +8,12 @@ from blender_extension.bone_physics import native
 
 
 class NativeLoaderTests(unittest.TestCase):
+    def test_source_extension_entrypoint_exposes_blender_lifecycle(self) -> None:
+        import blender_extension as source_extension
+
+        self.assertTrue(callable(source_extension.register))
+        self.assertTrue(callable(source_extension.unregister))
+
     def test_extension_entrypoint_exposes_blender_lifecycle(self) -> None:
         import blender_extension.bone_physics as extension
 
