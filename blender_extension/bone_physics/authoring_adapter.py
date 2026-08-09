@@ -22,6 +22,7 @@ from .authoring import (
 from .model import (
     AnalyticColliderSpec,
     AngularLimitMode,
+    AnalyticShape,
     BoneSpec,
     ChainBoneOverride,
     ChainField,
@@ -132,8 +133,11 @@ def collision_resources_from_rna(resources: Iterable[object]):
     for item in resources:
         kind = getattr(item, "kind")
         if kind == "ANALYTIC":
+            shape = getattr(item, "shape")
+            if isinstance(shape, str):
+                shape = AnalyticShape[shape]
             result.append(AnalyticCollisionResource(
-                id=item.id, stable_id=int(item.stable_id), shape=getattr(item, "shape"),
+                id=item.id, stable_id=int(item.stable_id), shape=shape,
                 binding=getattr(item, "binding"), object_name=getattr(item, "object_name") or None,
                 bone_name=getattr(item, "bone_name") or None, translation=tuple(item.translation),
                 rotation=tuple(item.rotation), radius=float(item.radius), local_a=tuple(item.local_a),

@@ -10,6 +10,7 @@ from blender_extension.bone_physics.authoring import (
 )
 from blender_extension.bone_physics.authoring_adapter import (
     SkeletonBone,
+    collision_resources_from_rna,
     compile_authoring,
     field_curves_from_points,
     physics_system_from_rna,
@@ -37,6 +38,28 @@ def skeleton():
 
 
 class AuthoringAdapterTests(unittest.TestCase):
+    def test_rna_collision_shape_identifier_converts_to_analytic_shape(self):
+        resource = SimpleNamespace(
+            kind="ANALYTIC",
+            id="head",
+            stable_id=30,
+            shape="SPHERE",
+            binding="WORLD",
+            object_name="",
+            bone_name="",
+            translation=(0.0, 0.0, 0.0),
+            rotation=(0.0, 0.0, 0.0, 1.0),
+            radius=0.1,
+            local_a=(0.0, 0.0, 0.0),
+            local_b=(0.0, 1.0, 0.0),
+            half_extents=(0.1, 0.1, 0.1),
+            enabled=True,
+        )
+
+        converted = collision_resources_from_rna((resource,))
+
+        self.assertEqual(converted[0].shape.name, "SPHERE")
+
     def test_chain_under_nonphysical_parent_gets_animated_root_attachment(self):
         config = ArmatureAuthoring(
             id="armature",

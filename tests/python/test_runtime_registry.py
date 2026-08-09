@@ -43,6 +43,31 @@ def invalid_spec():
 
 
 class RuntimeRegistryTests(unittest.TestCase):
+    def test_register_timer_tolerates_restricted_blender_data_context(self):
+        class Timers:
+            def __init__(self):
+                self.registered = set()
+
+            def is_registered(self, function):
+                return function in self.registered
+
+            def register(self, function, **_kwargs):
+                self.registered.add(function)
+
+            def unregister(self, function):
+                self.registered.discard(function)
+
+        fake_bpy = SimpleNamespace(
+            app=SimpleNamespace(
+                timers=Timers(),
+                handlers=SimpleNamespace(load_post=[], frame_change_post=[]),
+            ),
+            data=SimpleNamespace(),
+        )
+        with mock.patch.dict("sys.modules", {"bpy": fake_bpy}):
+            runtime_registry.register_timer()
+            runtime_registry.unregister_timer()
+
     def test_enabled_configured_settings_are_bootstrapped(self):
         registry = RecordingRegistry()
         scene = SimpleScene((FakeArmature(2, enabled=True, chains=1), FakeArmature(3, enabled=False, chains=1), FakeArmature(4, enabled=True, chains=0)))

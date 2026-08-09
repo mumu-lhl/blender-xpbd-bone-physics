@@ -527,7 +527,13 @@ def register_timer() -> None:
         bpy.app.handlers.load_post.append(_load_post_handler)
     if _frame_change_handler not in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.append(_frame_change_handler)
-    _bootstrap_enabled_worlds(bpy.data.scenes)
+    try:
+        scenes = bpy.data.scenes
+    except (AttributeError, ReferenceError, RuntimeError):
+        # Blender invokes add-on registration with restricted data access.
+        # The load-post handler will bootstrap worlds once full data is ready.
+        return
+    _bootstrap_enabled_worlds(scenes)
 
 
 def unregister_timer() -> None:
