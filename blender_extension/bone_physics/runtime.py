@@ -233,6 +233,25 @@ class RuntimeWorld:
         self.paused = False
         self.last_error = None
 
+    def reset_to_initial(self, scene, depsgraph) -> None:
+        """Write the freshly built native rest pose to the physical bones."""
+        object_to_simulation = getattr(
+            self.evaluator.adapter, "object_to_simulation", None
+        )
+        if object_to_simulation is None:
+            raise RuntimeError("scene adapter cannot initialize pose writing")
+        object_to_simulation(scene, depsgraph, self.world_spec)
+        self.evaluator.reset()
+        poses = tuple(self.bridge.read_poses(self.handle, self.body_ids))
+        if len(poses) != len(self.body_ids):
+            raise RuntimeError(
+                "native bridge returned a pose count that does not match body IDs"
+            )
+        self.pose_writer.apply(self.armature, self.body_ids, poses)
+        self._last_valid_channels = self.pose_writer.snapshot(
+            self.armature, self.body_ids
+        )
+
     def destroy(self) -> None:
         """Release the native handle exactly once after pose restoration."""
         if self._destroyed:

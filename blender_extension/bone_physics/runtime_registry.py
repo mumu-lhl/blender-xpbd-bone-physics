@@ -268,9 +268,11 @@ class RuntimeRegistry:
 
     def reset_configured_bones(self, context) -> None:
         armature = context.object
-        entry = self.restore_configured_bones(context)
-        _invalidate_cache(entry.world, "physics reset")
         replacement = self.rebuild(context.scene, armature)
+        replacement.reset_to_initial(
+            context.scene,
+            context.evaluated_depsgraph_get(),
+        )
         _invalidate_cache(replacement, "physics reset")
 
 

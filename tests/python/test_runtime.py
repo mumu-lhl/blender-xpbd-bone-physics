@@ -196,6 +196,22 @@ class RuntimeTests(unittest.TestCase):
 
         self.assertEqual(bridge.destroyed, [77])
 
+    def test_reset_to_initial_writes_native_rest_pose_to_configured_bones(self):
+        events = []
+        runtime, evaluator, _bridge, writer = self.runtime(events)
+
+        class Adapter:
+            def object_to_simulation(self, scene, depsgraph, world_spec):
+                del scene, depsgraph, world_spec
+                events.append("object_to_simulation")
+
+        evaluator.adapter = Adapter()
+
+        runtime.reset_to_initial(Scene(), object())
+
+        self.assertEqual(events, ["object_to_simulation", "read", "write"])
+        self.assertEqual(writer.writes[-1][1], (1, 2))
+
     def test_native_bridge_uses_chain_sampled_animation_inertia(self):
         bones = (
             BoneSpec(
