@@ -4,7 +4,7 @@ import uuid
 
 import bpy
 
-from ..properties import CURVE_FIELD_ITEMS, ENDPOINT_FIELD_ITEMS
+from ..properties import CURVE_FIELD_ITEMS, ENDPOINT_FIELD_ITEMS, _mark_dirty
 from ..translations import report, report_exception
 
 from ..chain_discovery import (
@@ -12,6 +12,7 @@ from ..chain_discovery import (
     BranchSelectionRequired,
     descendant_leaves,
     resolve_chain,
+    prune_chain_ids,
     validate_new_paths,
 )
 
@@ -294,6 +295,68 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BONE_PHYSICS_OT_chain_remove(bpy.types.Operator):
+    bl_idname = "bone_physics.chain_remove"
+    bl_label = "Remove Selected Chains"
+    bl_options = {"REGISTER", "UNDO"}
+
+    chain_id: bpy.props.StringProperty(name="Chain ID")
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        armature = _active_armature(context)
+        if armature is None or not armature.bone_physics.physics_systems:
+            return False
+        system = armature.bone_physics.physics_systems[
+            min(
+                armature.bone_physics.active_system_index,
+                len(armature.bone_physics.physics_systems) - 1,
+            )
+        ]
+        return bool(system.chains)
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        armature = _active_armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        settings = armature.bone_physics
+        system = settings.physics_systems[
+            min(settings.active_system_index, len(settings.physics_systems) - 1)
+        ]
+        available_ids = {chain.id for chain in system.chains if chain.id}
+        if self.chain_id:
+            if self.chain_id not in available_ids:
+                report(self, {"ERROR"}, "Chain no longer exists")
+                return {"CANCELLED"}
+            removed_ids = {self.chain_id}
+        else:
+            removed_ids = {chain.id for chain in system.chains if chain.selected and chain.id}
+        if not removed_ids:
+            report(self, {"ERROR"}, "Select at least one chain")
+            return {"CANCELLED"}
+
+        for index in reversed(range(len(system.chains))):
+            if system.chains[index].id in removed_ids:
+                system.chains.remove(index)
+
+        # Structural groups store chain IDs as a compact CSV field.  Remove
+        # dependent groups that can no longer satisfy their topology rules.
+        for index in reversed(range(len(system.structural_groups))):
+            group = system.structural_groups[index]
+            chain_ids = tuple(part.strip() for part in group.chain_ids.split(",") if part.strip())
+            remaining = prune_chain_ids(chain_ids, removed_ids)
+            if len(remaining) < 2 or (group.closed and len(remaining) < 3):
+                system.structural_groups.remove(index)
+            elif remaining != chain_ids:
+                group.chain_ids = ",".join(remaining)
+        system.active_structural_group_index = min(
+            system.active_structural_group_index,
+            max(0, len(system.structural_groups) - 1),
+        )
+        _mark_dirty(settings, "chains")
+        return {"FINISHED"}
+
+
 def _selected_systems(settings: bpy.types.PropertyGroup) -> tuple[bpy.types.PropertyGroup, ...]:
     return tuple(system for system in settings.physics_systems if system.selected)
 
@@ -500,6 +563,7 @@ CLASSES = (
     BONE_PHYSICS_OT_system_duplicate,
     BONE_PHYSICS_OT_system_remove,
     BONE_PHYSICS_OT_chain_add_selected,
+    BONE_PHYSICS_OT_chain_remove,
     BONE_PHYSICS_OT_apply_endpoint_value,
     BONE_PHYSICS_OT_curve_point_add,
     BONE_PHYSICS_OT_curve_point_remove,

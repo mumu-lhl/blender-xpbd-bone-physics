@@ -35,6 +35,22 @@ _FIELDS = {
 }
 
 
+def _tag_redraw() -> None:
+    """Refresh open editors after a preset mutates persisted RNA values."""
+    try:
+        for window in bpy.context.window_manager.windows:
+            screen = getattr(window, "screen", None)
+            if screen is None:
+                continue
+            for area in screen.areas:
+                area.tag_redraw()
+    except (AttributeError, ReferenceError, RuntimeError):
+        # Presets can also be used during file/context teardown; a redraw is
+        # cosmetic and must never turn a successful authoring write into an
+        # operator error.
+        return
+
+
 def _copy_parameters(source: dict, target: bpy.types.PropertyGroup, mask: str) -> None:
     fields = tuple(field for group, values in _FIELDS.items() if mask in {"ALL", group} for field in values)
     for field in fields:
@@ -235,6 +251,7 @@ class BONE_PHYSICS_OT_preset_apply(bpy.types.Operator):
         except (OSError, PresetError) as error:
             report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
+        _tag_redraw()
         return {"FINISHED"}
 
 
@@ -424,6 +441,7 @@ class BONE_PHYSICS_OT_exact_preset_apply(bpy.types.Operator):
         except (OSError, PresetError, RuntimeError, ValueError) as error:
             report_exception(self, {"ERROR"}, "Preset operation failed: {error}", error)
             return {"CANCELLED"}
+        _tag_redraw()
         return {"FINISHED"}
 
 

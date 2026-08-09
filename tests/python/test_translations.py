@@ -58,6 +58,30 @@ class TranslationTests(unittest.TestCase):
         }
         self.assertEqual(operator_ids, {"bone_physics.override_remove"})
 
+    def test_chain_remove_operator_is_declared(self):
+        source = (
+            Path(__file__).parents[2]
+            / "blender_extension"
+            / "bone_physics"
+            / "operators"
+            / "system.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        operator_ids = {
+            assignment.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+            and node.name == "BONE_PHYSICS_OT_chain_remove"
+            for assignment in node.body
+            if isinstance(assignment, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "bl_idname"
+                for target in assignment.targets
+            )
+            and isinstance(assignment.value, ast.Constant)
+        }
+        self.assertEqual(operator_ids, {"bone_physics.chain_remove"})
+
     def test_translate_supports_blender_positional_context_api(self):
         calls = []
 

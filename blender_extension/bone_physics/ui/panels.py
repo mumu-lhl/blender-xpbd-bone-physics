@@ -224,6 +224,13 @@ class BONE_PHYSICS_PT_constraints(bpy.types.Panel):
                 text=chain_display_name(chain.head_uuid, chain.tail_uuid),
                 translate=False,
             )
+            remove = row.operator("bone_physics.chain_remove", text="", icon="REMOVE")
+            remove.chain_id = chain.id
+        selection.operator(
+            "bone_physics.chain_remove",
+            text="Remove Selected Chains",
+            icon="REMOVE",
+        )
         actions = layout.row(align=True)
         actions.operator("bone_physics.structural_add", icon="ADD")
         actions.operator("bone_physics.structural_edit", text="", icon="GREASEPENCIL")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ast
 import tempfile
 import unittest
 from copy import deepcopy
@@ -70,6 +71,24 @@ def exact_config() -> dict[str, object]:
 
 
 class PresetIoTests(unittest.TestCase):
+    def test_preset_operators_request_ui_redraw_after_authoring_changes(self):
+        source = (
+            Path(__file__).parents[2]
+            / "blender_extension"
+            / "bone_physics"
+            / "operators"
+            / "preset.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        redraw_calls = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_tag_redraw"
+        }
+        self.assertIn("_tag_redraw", redraw_calls)
+
     def test_exact_preset_rejects_changed_rest_topology_without_partial_apply(self):
         target = deepcopy(exact_config())
         before = json.dumps(target, sort_keys=True)

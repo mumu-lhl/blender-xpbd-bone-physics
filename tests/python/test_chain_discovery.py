@@ -5,6 +5,7 @@ from blender_extension.bone_physics.chain_discovery import (
     BranchSelectionRequired,
     chain_display_name,
     descendant_leaves,
+    prune_chain_ids,
     resolve_chain,
     validate_new_paths,
 )
@@ -18,6 +19,12 @@ def skeleton(*entries):
 
 
 class ChainDiscoveryTests(unittest.TestCase):
+    def test_prune_chain_ids_removes_selected_chain_and_preserves_order(self):
+        self.assertEqual(
+            prune_chain_ids(("hair-left", "hair-middle", "hair-right"), {"hair-middle"}),
+            ("hair-left", "hair-right"),
+        )
+
     def test_chain_display_name_keeps_bone_names_and_shows_path(self):
         self.assertEqual(chain_display_name("Bone", "Bone.003"), "Bone → Bone.003")
         self.assertEqual(chain_display_name("Bone", "Bone"), "Bone")

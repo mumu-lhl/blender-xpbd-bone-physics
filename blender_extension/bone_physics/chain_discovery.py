@@ -97,6 +97,14 @@ def validate_new_paths(
         raise ValueError(f"physical bone overlap: {overlap[0]}")
 
 
+def prune_chain_ids(
+    chain_ids: Iterable[str], removed_ids: Iterable[str]
+) -> tuple[str, ...]:
+    """Remove selected chain IDs while preserving the authored order."""
+    removed = set(removed_ids)
+    return tuple(chain_id for chain_id in chain_ids if chain_id not in removed)
+
+
 def _validated_topology(
     nodes: Iterable[BoneNode],
 ) -> tuple[dict[str, BoneNode], dict[str, tuple[str, ...]]]:

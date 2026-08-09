@@ -59,6 +59,7 @@ _UI_MESSAGES = {
     "Duplicate Physics System",
     "Remove Physics System",
     "Add Chains from Selected Bones",
+    "Remove Selected Chains",
     "Add Structural Constraints",
     "Update Structural Constraints",
     "Remove Structural Constraints",
@@ -96,6 +97,8 @@ _UI_MESSAGES = {
     "Enter Pose Mode to add chains from selected bones.",
     "No current diagnostics.",
     "Select at least one physics system",
+    "Select at least one chain",
+    "Chain no longer exists",
     "Add a physics system before adding chains",
     "Add a physics system before adding an override",
     "Resource is referenced by: {references}",
@@ -118,6 +121,7 @@ _UI_MESSAGES = {
 _CRITICAL_OPERATOR_LABELS = frozenset({
     "Apply Endpoint Value", "Add Curve Point", "Add Selected Bone Override",
     "Remove Bone Override", "Remove Curve Point", "Select Diagnostic Target",
+    "Remove Selected Chains",
 })
 
 _ZH_HANS = {
@@ -126,7 +130,7 @@ _ZH_HANS = {
     "Reset Physics Bones": "重置物理骨骼", "Enable Physics": "启用物理", "Pause or Resume Physics": "暂停或恢复物理",
     "Isolate Armature Physics": "隔离骨架物理", "Initialize Physics Configuration": "初始化物理配置",
     "Add Physics System": "添加物理系统", "Duplicate Physics System": "复制物理系统", "Remove Physics System": "移除物理系统",
-    "Add Chains from Selected Bones": "从选中骨骼添加链", "Add Structural Constraints": "添加结构约束",
+    "Add Chains from Selected Bones": "从选中骨骼添加链", "Remove Selected Chains": "移除选中的骨骼链", "Add Structural Constraints": "添加结构约束",
     "Update Structural Constraints": "更新结构约束", "Remove Structural Constraints": "移除结构约束",
     "Add Collision Resource": "添加碰撞资源", "Duplicate Collision Resource": "复制碰撞资源", "Remove Collision Resource": "移除碰撞资源",
     "Assign Collision Resource": "分配碰撞资源", "Bind Collision Resource": "绑定碰撞资源", "Enable Collision Resource": "启用碰撞资源",
@@ -140,7 +144,7 @@ _ZH_HANS = {
     "Remove Curve Point": "移除曲线点", "Select Diagnostic Target": "选择诊断目标",
     "Deletes this preset permanently.": "永久删除此预设。", "Controls will appear in this workspace.": "控件将显示在此工作区中。",
     "No physics systems. Add one to begin.": "没有物理系统。请添加一个以开始。", "Enter Pose Mode to add chains from selected bones.": "进入姿态模式以从选中骨骼添加链。",
-    "No current diagnostics.": "当前没有诊断信息。", "Select at least one physics system": "至少选择一个物理系统。",
+    "No current diagnostics.": "当前没有诊断信息。", "Select at least one physics system": "至少选择一个物理系统。", "Select at least one chain": "至少选择一条骨骼链。", "Chain no longer exists": "骨骼链已不存在。",
     "Add a physics system before adding chains": "添加链之前请先添加物理系统。", "Add a physics system before adding an override": "添加覆盖前请先添加物理系统。",
     "Resource is referenced by: {references}": "资源被以下对象引用：{references}",
     "Preset operation failed: {error}": "预设操作失败：{error}",
