@@ -12,6 +12,12 @@ import threading
 import time
 from typing import Callable, Protocol
 
+try:
+    from bpy.app.handlers import persistent
+except (ImportError, AttributeError):
+    def persistent(function):
+        return function
+
 from .diagnostics import (
     DiagnosticBindings,
     DiagnosticItem,
@@ -426,11 +432,49 @@ def reset_configured_bones(context) -> None:
     REGISTRY.reset_configured_bones(context)
 
 
+def _has_enabled_physics(settings: object | None) -> bool:
+    if settings is None or not getattr(settings, "global_enabled", True):
+        return False
+    return any(
+        getattr(system, "enabled", True)
+        and bool(getattr(system, "chains", ()))
+        for system in getattr(settings, "physics_systems", ())
+    )
+
+
+def _bootstrap_enabled_worlds(
+    scenes, *, registry: RuntimeRegistry | None = None
+) -> None:
+    """Create session worlds for enabled systems in already-loaded scenes."""
+    active_registry = REGISTRY if registry is None else registry
+    for scene in scenes:
+        for armature in getattr(scene, "objects", ()):
+            try:
+                if (
+                    getattr(armature, "type", None) != "ARMATURE"
+                    or not _has_enabled_physics(
+                        getattr(armature, "bone_physics", None)
+                    )
+                ):
+                    continue
+                active_registry.ensure(scene, armature)
+            except Exception as error:
+                _set_runtime_diagnostic(armature, error)
+
+
+@persistent
+def _load_post_handler(_dummy=None) -> None:
+    import bpy
+
+    _bootstrap_enabled_worlds(bpy.data.scenes)
+
+
 def _timer_tick():
     flush_dirty()
     return 0.2
 
 
+@persistent
 def _frame_change_handler(scene, depsgraph) -> None:
     for entry in tuple(REGISTRY._worlds.values()):
         try:
@@ -477,8 +521,11 @@ def register_timer() -> None:
 
     if not bpy.app.timers.is_registered(_timer_tick):
         bpy.app.timers.register(_timer_tick, first_interval=0.2, persistent=True)
+    if _load_post_handler not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_load_post_handler)
     if _frame_change_handler not in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.append(_frame_change_handler)
+    _bootstrap_enabled_worlds(bpy.data.scenes)
 
 
 def unregister_timer() -> None:
@@ -490,3 +537,5 @@ def unregister_timer() -> None:
         bpy.app.timers.unregister(_timer_tick)
     if _frame_change_handler in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.remove(_frame_change_handler)
+    if _load_post_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_load_post_handler)

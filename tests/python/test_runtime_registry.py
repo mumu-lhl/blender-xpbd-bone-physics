@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from blender_extension.bone_physics.authoring import ValidationIssue, ValidationSeverity
@@ -40,6 +43,35 @@ def invalid_spec():
 
 
 class RuntimeRegistryTests(unittest.TestCase):
+    def test_enabled_configured_settings_are_bootstrapped(self):
+        registry = RecordingRegistry()
+        scene = SimpleScene((FakeArmature(2, enabled=True, chains=1), FakeArmature(3, enabled=False, chains=1), FakeArmature(4, enabled=True, chains=0)))
+
+        runtime_registry._bootstrap_enabled_worlds((scene,), registry=registry)
+
+        self.assertEqual(registry.calls, [(1, 2)])
+
+    def test_runtime_handlers_are_persistent_across_blend_load(self):
+        source = (
+            Path(__file__).parents[2]
+            / "blender_extension"
+            / "bone_physics"
+            / "runtime_registry.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        decorated = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {"_frame_change_handler", "_load_post_handler"}
+            and any(
+                isinstance(decorator, ast.Name) and decorator.id == "persistent"
+                for decorator in node.decorator_list
+            )
+        }
+
+        self.assertEqual(decorated, {"_frame_change_handler", "_load_post_handler"})
+
     def test_runtime_native_is_validated_before_world_creation(self):
         fake_native = object()
         with mock.patch.object(runtime_registry, "load_native", return_value=fake_native) as loader:
@@ -186,3 +218,29 @@ class DiagnosticArmature(Pointer):
     def __init__(self, value, settings):
         super().__init__(value)
         self.bone_physics = settings
+
+
+class RecordingRegistry:
+    def __init__(self):
+        self.calls = []
+
+    def ensure(self, scene, armature):
+        self.calls.append((scene.as_pointer(), armature.as_pointer()))
+
+
+class SimpleScene(Pointer):
+    def __init__(self, objects):
+        super().__init__(1)
+        self.objects = objects
+
+
+class FakeArmature(Pointer):
+    def __init__(self, value, *, enabled, chains):
+        super().__init__(value)
+        self.type = "ARMATURE"
+        self.bone_physics = SimpleNamespace(
+            global_enabled=enabled,
+            physics_systems=[
+                SimpleNamespace(enabled=True, chains=[object()] * chains)
+            ],
+        )
