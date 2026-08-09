@@ -9,17 +9,18 @@ for UMA, PMX/Bullet, or existing Blender jiggle-bone add-ons.
 
 ## Status
 
-Design specification approved; V1 implementation is complete on the
-`feat/v1-complete` branch. Release publication remains a separate manual
-authorization step.
+Design specification approved; V1.0.0 is released from the `v1.0.0` tag.
+The V1 feature set is complete, and ongoing work is limited to local
+maintenance and bug fixes.
 
 Read the approved architecture:
 
-- [Design specification](docs/superpowers/specs/2026-07-25-blender-xpbd-bone-physics-design.md)
-- [Core foundation plan](docs/superpowers/plans/2026-07-25-v1-core-foundation.md)
-- [Constraints and collision plan](docs/superpowers/plans/2026-07-25-v1-constraints-collision.md)
-- [PyO3 and Blender runtime plan](docs/superpowers/plans/2026-07-25-v1-blender-runtime.md)
-- [Mesh, bake, and release plan](docs/superpowers/plans/2026-07-25-v1-mesh-bake-release.md)
+- [Design specification](docs/design/blender-xpbd-bone-physics-design.md)
+- [Core foundation plan](docs/plans/v1-core-foundation.md)
+- [Constraints and collision plan](docs/plans/v1-constraints-collision.md)
+- [PyO3 and Blender runtime plan](docs/plans/v1-blender-runtime.md)
+- [Mesh, bake, and release plan](docs/plans/v1-mesh-bake-release.md)
+- [Current project status](docs/HANDOFF.md)
 
 ## Core decisions
 
@@ -36,7 +37,7 @@ Read the approved architecture:
 ## First-version boundaries
 
 The first version focuses on foundational bone motion, constraints, collision,
-cache, and bake. Wind, GPU solving, tearing, and full interaction design are
+cache, and bake. Wind, GPU solving, tearing, and other post-V1 extensions remain
 outside the initial scope.
 
 ## Blender workflow
@@ -58,6 +59,22 @@ The packaged read-only bone parameter presets are in the extension's
 `presets/bone_parameters` directory. User-created parameter and exact-armature
 presets are stored in Blender's user preset location and are never bundled.
 The interface is available in English and Simplified Chinese.
+
+## Local development
+
+The project is developed with the local Codex CLI workflow. From the repository
+root, use the `justfile` targets to build the native module, install it into the
+source extension used by the Blender VS Code launcher, or create the final
+archive:
+
+```bash
+just build-native
+just install-native
+just package-extension
+```
+
+Use Blender MCP for Blender runtime and UI checks; do not launch an unbounded
+Blender process from the shell.
 
 ## Verification
 
@@ -84,7 +101,9 @@ python scripts/ci/run_blender_tests.py \
 ```
 
 Package/load evidence is produced by `scripts/ci/run_package_load.py` and the
-four-platform manual workflow. No GitHub Release is created automatically.
+four-platform workflow. Pushing a version tag runs the package gate and
+automatically creates the GitHub Release; manual dispatch performs verification
+only.
 
 ## License
 

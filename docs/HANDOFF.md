@@ -1,22 +1,23 @@
-# Codex CLI Handoff
+# Project Status / Codex Handoff
 
-Status: 2026-08-02 (Asia/Shanghai)
+Status: 2026-08-09 (Asia/Shanghai)
 
 ## Current state
 
-- Branch: `feat/v1-complete`.
-- V1 implementation work is complete in this branch; no GitHub Release was
-  created.
-- UI Tasks 1-15 are complete locally. Task 15 adds installed-extension
-  character-workflow coverage, package-content assertions, and user/testing
-  documentation. The next action is to collect exact-commit cross-platform
-  package workflow artifacts; do not treat local Linux evidence as that proof.
+- V1.0.0 is complete and released from the `v1.0.0` tag. The four platform
+  packages and acceptance evidence are produced by the package workflow.
+- Post-release development is local maintenance through Codex. The latest
+  maintenance fix is `1b610288` (`fix(ci): handle Blender RNA and
+  registration`).
+- UI Tasks 1-15, installed-extension character workflows, package-content
+  assertions, and user/testing documentation are complete. There is no
+  remaining V1 feature work.
 - `docs/design/blender-xpbd-bone-physics-design.md` remains the semantic
   authority. The completion delta is recorded in
   `docs/superpowers/specs/2026-08-02-v1-completion-design.md`.
-- The branch is intentionally separate from the previously merged runtime
-  work. Cross-platform package evidence must come from the package workflow;
-  local evidence covers Linux only.
+- Cross-platform package evidence must come from the package workflow; local
+  evidence is sufficient for day-to-day Linux development and regression
+  checks.
 
 ## Completed implementation
 
@@ -38,7 +39,7 @@ Status: 2026-08-02 (Asia/Shanghai)
 - `cargo test --workspace --all-targets`: passed.
 - `cargo tree --duplicates`: completed; duplicate groups are reported, not
   hidden.
-- Python discovery: 129 tests passed with the pinned uv environment.
+- Python discovery: 216 tests passed with the host native module available.
 - Linux package/load harness: passed twice; byte-identical archives and SHA-256
   sidecars matched.
 - Native reference matrix: 60 runs, zero failures.
@@ -77,5 +78,7 @@ cargo tree --duplicates
 python -m unittest discover tests/python -v
 ```
 
-For Blender Python debugging, use Blender MCP. Do not launch an unbounded
-Blender process from the shell.
+For Blender Python debugging and UI/runtime checks, use Blender MCP. Do not
+launch an unbounded Blender process from the shell. For native builds and
+source-tree installation, use the `justfile` targets documented in
+`docs/building.md`.

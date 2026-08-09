@@ -6,7 +6,7 @@ These instructions apply to the whole repository.
 
 Before changing physics behavior, public APIs, dependencies, or CI, read:
 
-1. `docs/HANDOFF.md` for the current branch state and next action.
+1. `docs/HANDOFF.md` for the current repository status and next action.
 2. `docs/design/blender-xpbd-bone-physics-design.md` for approved semantics.
 3. `docs/plans/v1-constraints-collision.md` for task boundaries and progress.
 
@@ -18,9 +18,10 @@ V1 roadmap status:
 4. `docs/plans/v1-mesh-bake-release.md` — completed in PR #4.
 
 V1.0.0 is published. Tag `v1.0.0` points to the merged `main` commit;
-the GitHub Release contains four platform packages, SHA-256 sidecars, and
+the package workflow produces four platform packages, SHA-256 sidecars, and
 acceptance evidence. Version tags now trigger automatic package builds and
-Release publication; Release assets contain platform ZIPs only.
+Release publication; Release assets contain platform ZIPs only, while sidecars
+and evidence remain Actions artifacts.
 
 If the documents appear inconsistent, preserve the design invariants, treat
 `HANDOFF.md` as the newest status record, and stop to resolve any semantic
@@ -64,6 +65,14 @@ conflict before changing code.
 
 ## Development Workflow
 
+- Use the local Codex CLI workflow for repository changes. Keep
+  `docs/HANDOFF.md` current so a later Codex session can resume without
+  reconstructing project state.
+- Use `just build-native`, `just install-native`, and `just package-extension`
+  for the native build, Blender source-tree installation, and final archive.
+- Use Blender MCP for Blender runtime and UI checks. Do not launch an
+  unbounded Blender process from the shell.
+
 - For every behavior change, first add a test whose failure demonstrates the
   missing behavior, record the RED result, implement the smallest GREEN change,
   then refactor without changing the contract.
@@ -95,3 +104,9 @@ Task-specific tests establish RED/GREEN evidence, but they do not replace the
 complete gate. GitHub Actions is authoritative when the local environment
 lacks the pinned toolchain or dependencies. Confirm that uploaded CI reports
 are present and nonempty.
+
+For Blender extension or Python changes, also run:
+
+```bash
+python -m unittest discover tests/python -v
+```
