@@ -3,6 +3,7 @@ import unittest
 from blender_extension.bone_physics.chain_discovery import (
     BoneNode,
     BranchSelectionRequired,
+    chain_display_name,
     descendant_leaves,
     resolve_chain,
     validate_new_paths,
@@ -17,6 +18,10 @@ def skeleton(*entries):
 
 
 class ChainDiscoveryTests(unittest.TestCase):
+    def test_chain_display_name_keeps_bone_names_and_shows_path(self):
+        self.assertEqual(chain_display_name("Bone", "Bone.003"), "Bone → Bone.003")
+        self.assertEqual(chain_display_name("Bone", "Bone"), "Bone")
+
     def test_resolve_chain_follows_parent_links(self):
         nodes = skeleton(("root", None), ("mid", "root"), ("tip", "mid"))
 

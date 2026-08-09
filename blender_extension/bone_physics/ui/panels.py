@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import bpy
 
+from ..chain_discovery import chain_display_name
 from ..preset_io import EXACT_ARMATURE_PRESET_KIND, PRESET_KIND, list_presets
 
 
@@ -103,7 +104,7 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
         preset_box.operator("bone_physics.preset_save", icon="FILE_TICK")
         for preset in list_presets(PRESET_KIND):
             row = preset_box.row(align=True)
-            apply = row.operator("bone_physics.preset_apply", text=preset["name"], icon="IMPORT")
+            apply = row.operator("bone_physics.preset_apply", text=preset["name"], translate=False, icon="IMPORT")
             apply.filepath = str(preset["path"])
             apply.mask = "ALL"
             apply.target = "ALL"
@@ -127,7 +128,7 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
         exact_box.operator("bone_physics.exact_preset_save", icon="FILE_TICK")
         for preset in list_presets(EXACT_ARMATURE_PRESET_KIND):
             row = exact_box.row(align=True)
-            apply = row.operator("bone_physics.exact_preset_apply", text=preset["name"], icon="IMPORT")
+            apply = row.operator("bone_physics.exact_preset_apply", text=preset["name"], translate=False, icon="IMPORT")
             apply.filepath = str(preset["path"])
             if preset["read_only"]:
                 row.label(text="Packaged", icon="LOCKED")
@@ -151,11 +152,15 @@ class BONE_PHYSICS_PT_parameters(bpy.types.Panel):
             _draw_endpoint_group(layout, system, group)
         box = layout.box()
         box.label(text="Per-Bone Overrides")
-        box.operator("bone_physics.override_add_selected")
+        override_actions = box.row(align=True)
+        override_actions.operator("bone_physics.override_add_selected", icon="ADD")
+        override_actions.operator("bone_physics.override_remove", icon="REMOVE")
         if system.overrides:
             box.template_list("BONE_PHYSICS_UL_overrides", "", system, "overrides", system, "active_override_index")
             override = system.overrides[min(system.active_override_index, len(system.overrides) - 1)]
-            box.label(text=f"Override Values: {override.bone_name}")
+            row = box.row(align=True)
+            row.label(text="Override Values:")
+            row.label(text=override.bone_name, translate=False)
             for fields in _GROUP_FIELDS.values():
                 for field in fields:
                     box.prop(override.parameters, field)
@@ -213,7 +218,12 @@ class BONE_PHYSICS_PT_constraints(bpy.types.Panel):
         selection = layout.box()
         selection.label(text="Selected Chains")
         for chain in system.chains:
-            selection.prop(chain, "selected", text=chain.id or "Unnamed chain")
+            row = selection.row(align=True)
+            row.prop(chain, "selected", text="")
+            row.label(
+                text=chain_display_name(chain.head_uuid, chain.tail_uuid),
+                translate=False,
+            )
         actions = layout.row(align=True)
         actions.operator("bone_physics.structural_add", icon="ADD")
         actions.operator("bone_physics.structural_edit", text="", icon="GREASEPENCIL")

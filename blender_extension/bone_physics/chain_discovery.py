@@ -27,6 +27,13 @@ class BranchSelectionRequired(ValueError):
         )
 
 
+def chain_display_name(head_uuid: str | None, tail_uuid: str | None) -> str:
+    """Return a stable, untranslated label for a configured chain path."""
+    head = str(head_uuid or "Unnamed chain")
+    tail = str(tail_uuid or "")
+    return head if not tail or tail == head else f"{head} → {tail}"
+
+
 def descendant_leaves(nodes: Iterable[BoneNode], head_uuid: str) -> tuple[str, ...]:
     """Return the stable-sorted leaves below ``head_uuid`` (including itself)."""
     by_id, children = _validated_topology(nodes)

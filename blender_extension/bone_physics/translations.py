@@ -87,6 +87,7 @@ _UI_MESSAGES = {
     "Apply Endpoint Value",
     "Add Curve Point",
     "Add Selected Bone Override",
+    "Remove Bone Override",
     "Remove Curve Point",
     "Select Diagnostic Target",
     "Deletes this preset permanently.",
@@ -105,6 +106,7 @@ _UI_MESSAGES = {
     "Select one branched chain head at a time",
     "Active armature changed while choosing a chain tail",
     "Select a tail for branched chain {head}",
+    "Chain already exists: {chain}",
     "Curve point positions must be strictly increasing",
     "Diagnostic target no longer exists",
     "Diagnostic target is hidden; it was not made visible",
@@ -115,7 +117,7 @@ _UI_MESSAGES = {
 
 _CRITICAL_OPERATOR_LABELS = frozenset({
     "Apply Endpoint Value", "Add Curve Point", "Add Selected Bone Override",
-    "Remove Curve Point", "Select Diagnostic Target",
+    "Remove Bone Override", "Remove Curve Point", "Select Diagnostic Target",
 })
 
 _ZH_HANS = {
@@ -134,7 +136,7 @@ _ZH_HANS = {
     "Delete Bone Parameter Preset": "删除骨骼参数预设", "Copy Bone Parameter Preset": "复制骨骼参数预设",
     "Rename Bone Parameter Preset": "重命名骨骼参数预设", "Save Exact Armature Preset": "保存完整骨架预设",
     "Apply Exact Armature Preset": "应用完整骨架预设", "Delete Exact Armature Preset": "删除完整骨架预设",
-    "Apply Endpoint Value": "应用端点值", "Add Curve Point": "添加曲线点", "Add Selected Bone Override": "添加选中骨骼覆盖",
+    "Apply Endpoint Value": "应用端点值", "Add Curve Point": "添加曲线点", "Add Selected Bone Override": "添加选中骨骼覆盖", "Remove Bone Override": "移除骨骼覆盖",
     "Remove Curve Point": "移除曲线点", "Select Diagnostic Target": "选择诊断目标",
     "Deletes this preset permanently.": "永久删除此预设。", "Controls will appear in this workspace.": "控件将显示在此工作区中。",
     "No physics systems. Add one to begin.": "没有物理系统。请添加一个以开始。", "Enter Pose Mode to add chains from selected bones.": "进入姿态模式以从选中骨骼添加链。",
@@ -147,7 +149,7 @@ _ZH_HANS = {
     "Physics operation failed": "物理操作失败",
     "Select one branched chain head at a time": "一次只能选择一个分支链头。",
     "Active armature changed while choosing a chain tail": "选择链尾时活动骨架已更改。",
-    "Select a tail for branched chain {head}": "为分支链 {head} 选择一个尾端。",
+    "Select a tail for branched chain {head}": "为分支链 {head} 选择一个尾端。", "Chain already exists: {chain}": "骨骼链已存在：{chain}",
     "Curve point positions must be strictly increasing": "曲线点位置必须严格递增。",
     "Diagnostic target no longer exists": "诊断目标已不存在。",
     "Diagnostic target is hidden; it was not made visible": "诊断目标被隐藏，未显示。",

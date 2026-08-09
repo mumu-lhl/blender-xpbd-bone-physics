@@ -15,6 +15,49 @@ from blender_extension.bone_physics.translations import (
 
 
 class TranslationTests(unittest.TestCase):
+    def test_chain_operator_imports_exception_reporter(self):
+        source = (
+            Path(__file__).parents[2]
+            / "blender_extension"
+            / "bone_physics"
+            / "operators"
+            / "system.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.level == 2
+            and node.module == "translations"
+            for alias in node.names
+        }
+        self.assertIn("report_exception", imported)
+
+    def test_override_remove_operator_is_declared(self):
+        source = (
+            Path(__file__).parents[2]
+            / "blender_extension"
+            / "bone_physics"
+            / "operators"
+            / "system.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        operator_ids = {
+            assignment.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+            and node.name == "BONE_PHYSICS_OT_override_remove"
+            for assignment in node.body
+            if isinstance(assignment, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "bl_idname"
+                for target in assignment.targets
+            )
+            and isinstance(assignment.value, ast.Constant)
+        }
+        self.assertEqual(operator_ids, {"bone_physics.override_remove"})
+
     def test_translate_supports_blender_positional_context_api(self):
         calls = []
 

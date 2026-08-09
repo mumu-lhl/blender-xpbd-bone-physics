@@ -5,7 +5,7 @@ import uuid
 import bpy
 
 from ..properties import CURVE_FIELD_ITEMS, ENDPOINT_FIELD_ITEMS
-from ..translations import report
+from ..translations import report, report_exception
 
 from ..chain_discovery import (
     BoneNode,
@@ -268,6 +268,15 @@ class BONE_PHYSICS_OT_chain_add_selected(bpy.types.Operator):
                 for system in settings.physics_systems
                 for chain in system.chains
             )
+            duplicates = sorted(set(new_paths).intersection(existing_paths))
+            if duplicates:
+                report(
+                    self,
+                    {"ERROR"},
+                    "Chain already exists: {chain}",
+                    chain=" → ".join(duplicates[0]),
+                )
+                return {"CANCELLED"}
             validate_new_paths(existing_paths, new_paths)
         except BranchSelectionRequired as error:
             report(self, {"ERROR"}, "Select a tail for branched chain {head}", head=error.head_uuid)
@@ -435,6 +444,35 @@ class BONE_PHYSICS_OT_override_add_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BONE_PHYSICS_OT_override_remove(bpy.types.Operator):
+    bl_idname = "bone_physics.override_remove"
+    bl_label = "Remove Bone Override"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        armature = _active_armature(context)
+        if armature is None or not armature.bone_physics.physics_systems:
+            return False
+        settings = armature.bone_physics
+        system = settings.physics_systems[
+            min(settings.active_system_index, len(settings.physics_systems) - 1)
+        ]
+        return bool(system.overrides)
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        settings = _active_armature(context).bone_physics
+        system = settings.physics_systems[
+            min(settings.active_system_index, len(settings.physics_systems) - 1)
+        ]
+        if not system.overrides:
+            return {"CANCELLED"}
+        index = min(system.active_override_index, len(system.overrides) - 1)
+        system.overrides.remove(index)
+        system.active_override_index = min(index, max(0, len(system.overrides) - 1))
+        return {"FINISHED"}
+
+
 class BONE_PHYSICS_OT_curve_point_remove(bpy.types.Operator):
     bl_idname = "bone_physics.curve_point_remove"
     bl_label = "Remove Curve Point"
@@ -466,4 +504,5 @@ CLASSES = (
     BONE_PHYSICS_OT_curve_point_add,
     BONE_PHYSICS_OT_curve_point_remove,
     BONE_PHYSICS_OT_override_add_selected,
+    BONE_PHYSICS_OT_override_remove,
 )
