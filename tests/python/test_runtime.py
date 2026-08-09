@@ -6,7 +6,16 @@ except ModuleNotFoundError:
     native = None
 
 from blender_extension.bone_physics.mesh_builder import MeshSource, build_collision_surface
-from blender_extension.bone_physics.model import BoneSpec, CollisionSurfaceSpec, WorldSpec
+from blender_extension.bone_physics.model import (
+    BoneSpec,
+    ChainField,
+    ChainFieldCurve,
+    ChainSpec,
+    CollisionSurfaceSpec,
+    CurvePoint,
+    ParameterCurve,
+    WorldSpec,
+)
 from blender_extension.bone_physics.parameter_builder import compile_world_spec
 from blender_extension.bone_physics.prephysics_eval import PrePhysicsSnapshot, TargetPose
 from blender_extension.bone_physics.runtime import NativeRuntimeBridge, RuntimeWorld
@@ -186,6 +195,48 @@ class RuntimeTests(unittest.TestCase):
         runtime.destroy()
 
         self.assertEqual(bridge.destroyed, [77])
+
+    def test_native_bridge_uses_chain_sampled_animation_inertia(self):
+        bones = (
+            BoneSpec(
+                id=1,
+                name="root",
+                local_head=(0.0, 0.0, 0.0),
+                local_tail=(0.0, 1.0, 0.0),
+            ),
+            BoneSpec(
+                id=2,
+                name="tip",
+                parent_id=1,
+                joint_constraint_id=10,
+                local_head=(0.0, 0.0, 0.0),
+                local_tail=(0.0, 1.0, 0.0),
+            ),
+        )
+        curve = ParameterCurve(
+            (CurvePoint(0.0, 0.0), CurvePoint(1.0, 1.0)),
+        )
+        world = WorldSpec(
+            bones=bones,
+            chains=(
+                ChainSpec(
+                    id="hair",
+                    body_ids=(1, 2),
+                    field_curves=(
+                        ChainFieldCurve(ChainField.TRANSLATION_INERTIA, curve),
+                    ),
+                ),
+            ),
+        )
+        bridge = NativeRuntimeBridge(
+            object(),
+            compile_world_spec(world),
+            world.bones,
+            fixed_dt=world.fixed_dt,
+        )
+
+        self.assertAlmostEqual(bridge.bones[1].translation_inertia, 0.25)
+        self.assertAlmostEqual(bridge.bones[2].translation_inertia, 0.75)
 
     def test_handler_captures_then_solves_then_writes_exactly_once_under_reentry(self):
         events = []

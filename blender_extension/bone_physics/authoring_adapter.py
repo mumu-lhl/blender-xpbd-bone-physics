@@ -301,6 +301,13 @@ def compile_authoring(
     chains: list[ChainSpec] = []
     cross_links: list[CrossLinkSpec] = []
     claimed: set[str] = set()
+    physical_uuids = {
+        uuid
+        for system in config.physics_systems
+        if system.enabled
+        for chain in system.chains
+        for uuid in chain.bone_uuids
+    }
     for system in sorted((item for item in config.physics_systems if item.enabled), key=lambda item: item.stable_id):
         for chain_authoring in sorted(system.chains, key=lambda item: item.stable_id):
             path = tuple(chain_authoring.bone_uuids)
@@ -310,6 +317,19 @@ def compile_authoring(
                 raise ValueError("a physical bone may belong to only one chain")
             claimed.update(path)
             ids = {uuid: allocator.allocate("body", uuid) for uuid in path}
+            root = nodes[path[0]]
+            # A chain head below an unconfigured bone must follow that
+            # animated parent.  Keep the parent kinematic; the native
+            # attachment constraint targets the root's animation source.
+            root_target = (
+                chain_authoring.target_binding is not None
+                or chain_authoring.target_id is not None
+                or root.parent_uuid is not None
+            )
+            root_is_animated = (
+                root_target
+                and root.parent_uuid not in physical_uuids
+            )
             for index, uuid in enumerate(path):
                 node = nodes[uuid]
                 parent_id = ids.get(node.parent_uuid)
@@ -341,6 +361,11 @@ def compile_authoring(
                 bone_overrides=tuple(
                     ChainBoneOverride(ids[override.bone_uuid], override.values)
                     for override in _validated_overrides(path, chain_authoring.overrides)
+                ),
+                attachment_constraint_id=(
+                    allocator.allocate("attachment", chain_authoring.id)
+                    if root_is_animated
+                    else None
                 ),
             ))
         cross_links.extend(system.cross_links)

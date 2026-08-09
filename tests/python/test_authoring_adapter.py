@@ -37,6 +37,31 @@ def skeleton():
 
 
 class AuthoringAdapterTests(unittest.TestCase):
+    def test_chain_under_nonphysical_parent_gets_animated_root_attachment(self):
+        config = ArmatureAuthoring(
+            id="armature",
+            physics_systems=(
+                PhysicsSystemAuthoring(
+                    id="hair",
+                    stable_id=10,
+                    chains=(ChainAuthoring("hair-chain", 20, ("mid", "tip")),),
+                ),
+            ),
+        )
+
+        world = compile_authoring(config, skeleton())
+
+        chain = world.chains[0]
+        self.assertIsNotNone(chain.attachment_constraint_id)
+        self.assertEqual(world.bones[0].target_binding.kind, TargetKind.BONE)
+        self.assertEqual(world.bones[0].target_binding.name, "hair_root")
+
+        compiled = compile_world_spec(world)
+        attachment_index = tuple(compiled.constraints["ids"]).index(
+            chain.attachment_constraint_id
+        )
+        self.assertEqual(tuple(compiled.constraints["kinds"])[attachment_index], 3)
+
     def test_rna_snapshot_includes_curves_and_override_values(self):
         def endpoint(**updates):
             source = EndpointParameters(**updates)

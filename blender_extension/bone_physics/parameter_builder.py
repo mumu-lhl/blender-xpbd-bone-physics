@@ -80,6 +80,10 @@ class NativeBuildBatch:
     constraints: dict[str, object]
     filters: dict[str, object]
     analytic_colliders: dict[str, object]
+    # Bone parameters after chain curves and per-bone overrides are sampled.
+    # Runtime animation targets need these values too; the native body batch
+    # alone does not carry translation/rotation inertia.
+    effective_bones: tuple[BoneSpec, ...] = ()
 
     def constraint_row(self, constraint_id: int) -> tuple[float, ...]:
         ids = self.constraints["ids"]
@@ -285,6 +289,7 @@ def compile_world_spec(spec: WorldSpec) -> NativeBuildBatch:
         constraints=_compile_constraints(constraints),
         filters=compile_collision_filters(bones),
         analytic_colliders=compile_analytic_colliders(spec.analytic_colliders),
+        effective_bones=bones,
     )
 
 

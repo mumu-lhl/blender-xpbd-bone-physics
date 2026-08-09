@@ -70,6 +70,38 @@ class FakeCaptureAdapter:
         return scene.colliders[collider.id]
 
 
+class TimeAwareCaptureAdapter(FakeCaptureAdapter):
+    """A scene-time change evaluates animation before the capture starts."""
+
+    def set_scene_time(self, scene, seconds):
+        scene.time = seconds
+        scene.visible[1] = pose(seconds)
+
+    def evaluate_prephysics(self, scene, depsgraph):
+        del scene, depsgraph
+
+
+class AnimationStateCaptureAdapter(TimeAwareCaptureAdapter):
+    """Animation channels must be restored before evaluating a new frame."""
+
+    def set_scene_time(self, scene, seconds):
+        scene.time = seconds
+        scene.visible[1] = pose(seconds)
+        if getattr(scene, "animation_state_restored", False):
+            scene.visible[2] = pose(seconds + 1.0)
+        scene.animation_state_restored = False
+
+    def capture_animation_state(self, scene, world_spec):
+        return {
+            bone.id: scene.visible[bone.id]
+            for bone in world_spec.bones
+        }
+
+    def restore_animation_state(self, scene, state):
+        scene.visible.update(state)
+        scene.animation_state_restored = True
+
+
 class FakeWriteAdapter:
     def __init__(self, channels):
         self.channels = channels
@@ -133,6 +165,29 @@ class SceneAdapterTests(unittest.TestCase):
                 "target:2",
             ],
         )
+
+    def test_capture_at_evaluates_new_animation_after_restoring_previous_output(self):
+        scene = FakeScene()
+        adapter = TimeAwareCaptureAdapter()
+        evaluator = PrePhysicsEvaluator(adapter)
+
+        first = evaluator.capture_at(scene, object(), self.world(), 1.0)
+        second = evaluator.capture_at(scene, object(), self.world(), 2.0)
+
+        self.assertEqual(first.target_poses[0].current, pose(1.0))
+        self.assertEqual(second.target_poses[0].previous, pose(1.0))
+        self.assertEqual(second.target_poses[0].current, pose(2.0))
+
+    def test_capture_at_does_not_feed_prior_physics_into_unkeyed_children(self):
+        scene = FakeScene()
+        adapter = AnimationStateCaptureAdapter()
+        evaluator = PrePhysicsEvaluator(adapter)
+
+        evaluator.capture_at(scene, object(), self.world(), 1.0)
+        second = evaluator.capture_at(scene, object(), self.world(), 2.0)
+
+        self.assertEqual(second.target_poses[0].current, pose(2.0))
+        self.assertEqual(second.target_poses[1].current, pose(3.0))
 
     def test_pose_writer_changes_only_declared_channels(self):
         channels = {1: pose(1.0), 2: pose(2.0), 99: pose(99.0)}

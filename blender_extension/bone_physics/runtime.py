@@ -258,7 +258,8 @@ class NativeRuntimeBridge:
     ) -> None:
         self.native = native
         self.compiled = compiled
-        self.bones = {bone.id: bone for bone in bones}
+        effective_bones = compiled.effective_bones or tuple(bones)
+        self.bones = {bone.id: bone for bone in effective_bones}
         self.fixed_dt = fixed_dt
         self.quality = quality
         self.restore_checkpoint = restore_checkpoint

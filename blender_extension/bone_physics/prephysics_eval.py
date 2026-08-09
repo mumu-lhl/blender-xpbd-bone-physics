@@ -47,6 +47,14 @@ class CaptureAdapter(Protocol):
 
     def restore_animation_references(self, scene, references: dict[int, Pose]) -> None: ...
 
+    # Blender pose channels are separate from the evaluated target poses that
+    # physics writes back.  Adapters that can preserve those channels should
+    # provide these optional methods.  The evaluator keeps the old reference
+    # path as a compatibility fallback for lightweight/test adapters.
+    def capture_animation_state(self, scene, world_spec: WorldSpec) -> dict[int, object]: ...
+
+    def restore_animation_state(self, scene, state: dict[int, object]) -> None: ...
+
     def evaluate_prephysics(self, scene, depsgraph) -> None: ...
 
     def scene_time(self, scene) -> float: ...
@@ -83,16 +91,27 @@ class PrePhysicsEvaluator:
         self._last_colliders: dict[int, Pose] = {}
         self._last_mesh_sources: dict[int, MeshSource] = {}
         self._mesh_templates: dict[int, CollisionMeshBatch] = {}
+        self._last_animation_state: dict[int, object] = {}
 
     def capture(self, scene, depsgraph, world_spec: WorldSpec) -> PrePhysicsSnapshot:
+        return self._capture(
+            scene,
+            depsgraph,
+            world_spec,
+            restore_references=True,
+        )
+
+    def _capture(
+        self,
+        scene,
+        depsgraph,
+        world_spec: WorldSpec,
+        *,
+        restore_references: bool,
+    ) -> PrePhysicsSnapshot:
         body_ids = {bone.id for bone in world_spec.bones}
-        references = {
-            body_id: pose
-            for body_id, pose in self._last_targets.items()
-            if body_id in body_ids
-        }
-        if references:
-            self.adapter.restore_animation_references(scene, references)
+        if restore_references:
+            self._restore_clean_animation(scene, body_ids)
         self.adapter.evaluate_prephysics(scene, depsgraph)
         object_to_simulation = tuple(
             self.adapter.object_to_simulation(scene, depsgraph, world_spec)
@@ -147,6 +166,7 @@ class PrePhysicsEvaluator:
         self._last_targets = next_targets
         self._last_colliders = next_colliders
         self._last_mesh_sources = next_mesh_sources
+        self._capture_animation_state(scene, world_spec)
         return snapshot
 
     def capture_at(
@@ -158,8 +178,18 @@ class PrePhysicsEvaluator:
     ) -> PrePhysicsSnapshot:
         if not math.isfinite(sample_time):
             raise ValueError("pre-physics sample time must be finite")
+        body_ids = {bone.id for bone in world_spec.bones}
+        # Restore local animation channels before changing Blender time.  A
+        # child without its own keyframes otherwise inherits the previous
+        # physics-deformed parent pose when frame_set() evaluates the new time.
+        self._restore_clean_animation(scene, body_ids)
         self.adapter.set_scene_time(scene, sample_time)
-        return self.capture(scene, depsgraph, world_spec)
+        return self._capture(
+            scene,
+            depsgraph,
+            world_spec,
+            restore_references=False,
+        )
 
     def restore_time(
         self,
@@ -170,8 +200,7 @@ class PrePhysicsEvaluator:
     ) -> None:
         if not math.isfinite(time):
             raise ValueError("pre-physics restore time must be finite")
-        if self._last_targets:
-            self.adapter.restore_animation_references(scene, self._last_targets)
+        self._restore_clean_animation(scene, {bone.id for bone in world_spec.bones})
         self.adapter.set_scene_time(scene, time)
         self.adapter.evaluate_prephysics(scene, depsgraph)
         self.adapter.object_to_simulation(scene, depsgraph, world_spec)
@@ -183,12 +212,14 @@ class PrePhysicsEvaluator:
         dict[int, Pose],
         dict[int, MeshSource],
         dict[int, CollisionMeshBatch],
+        dict[int, object],
     ]:
         return (
             dict(self._last_targets),
             dict(self._last_colliders),
             dict(self._last_mesh_sources),
             dict(self._mesh_templates),
+            dict(self._last_animation_state),
         )
 
     def restore_state(
@@ -198,16 +229,45 @@ class PrePhysicsEvaluator:
             dict[int, Pose],
             dict[int, MeshSource],
             dict[int, CollisionMeshBatch],
+            dict[int, object],
         ],
     ) -> None:
-        targets, colliders, meshes, templates = state
+        targets, colliders, meshes, templates, animation_state = state
         self._last_targets = dict(targets)
         self._last_colliders = dict(colliders)
         self._last_mesh_sources = dict(meshes)
         self._mesh_templates = dict(templates)
+        self._last_animation_state = dict(animation_state)
 
     def reset(self) -> None:
         self._last_targets.clear()
         self._last_colliders.clear()
         self._last_mesh_sources.clear()
         self._mesh_templates.clear()
+        # Keep authored local channels: timeline seeks must still restore a
+        # clean pose before frame_set() evaluates the replay target.
+
+    def _capture_animation_state(self, scene, world_spec: WorldSpec) -> None:
+        capture = getattr(self.adapter, "capture_animation_state", None)
+        if capture is None:
+            return
+        state = capture(scene, world_spec)
+        self._last_animation_state = dict(state)
+
+    def _restore_clean_animation(self, scene, body_ids: set[int]) -> None:
+        state = {
+            body_id: value
+            for body_id, value in self._last_animation_state.items()
+            if body_id in body_ids
+        }
+        restore = getattr(self.adapter, "restore_animation_state", None)
+        if restore is not None and state:
+            restore(scene, state)
+            return
+        references = {
+            body_id: pose
+            for body_id, pose in self._last_targets.items()
+            if body_id in body_ids
+        }
+        if references:
+            self.adapter.restore_animation_references(scene, references)

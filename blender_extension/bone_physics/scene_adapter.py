@@ -84,6 +84,26 @@ class BlenderSceneAdapter:
             staged = self.stage_pose(armature, body_id, reference)
             self.write_pose_channel(armature, body_id, staged)
 
+    def capture_animation_state(self, scene, world_spec) -> dict[int, object]:
+        """Snapshot local animation channels before physics overwrites poses.
+
+        ``matrix_basis`` is the authored/local channel.  Capturing evaluated
+        ``Pose`` values instead would feed a previous physics result into an
+        unkeyed child when its parent is animated on the next frame.
+        """
+        armature = scene.objects[self.armature_name]
+        return {
+            bone.id: self.read_pose_channel(armature, bone.id)
+            for bone in world_spec.bones
+        }
+
+    def restore_animation_state(self, scene, state: Mapping[int, object]) -> None:
+        if not state:
+            return
+        armature = scene.objects[self.armature_name]
+        for body_id, value in state.items():
+            self.write_pose_channel(armature, body_id, value)
+
     @staticmethod
     def set_scene_time(scene, seconds: float) -> None:
         if not math.isfinite(seconds):
